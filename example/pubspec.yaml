@@ -1,0 +1,14 @@
+name: directory_tree_example
+description: Demonstrates printing a virtual directory tree.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  directory_tree:
+    path: ..
+
+dev_dependencies:
+  lints: ^6.0.0
