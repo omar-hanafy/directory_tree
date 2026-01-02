@@ -43,6 +43,35 @@ final children = tree.nodes[repoFolderId]!.childIds;
 final startId = tree.visibleRootId;
 ```
 
+## Flattening & Rendering
+To render the tree (e.g., in a `ListView`), convert the graph into a flat list using a `FlattenStrategy`.
+
+```dart
+// 1. Define which nodes are expanded
+final expandedIds = <String>{tree.rootId, ...}; 
+
+// 2. Flatten the tree
+final strategy = const DefaultFlattenStrategy();
+final visibleRows = strategy.flatten(
+  data: tree, 
+  expandedIds: expandedIds,
+);
+
+// 3. Render
+for (final row in visibleRows) {
+  print('${"  " * row.depth} ${row.name}');
+}
+```
+
+### Efficient Updates
+Use `diffVisibleNodes` to compute the minimal changes between two states. This is ideal for Flutter's `AnimatedList`:
+
+```dart
+final diff = diffVisibleNodes(oldList, newList);
+// diff.removeIndicesDesc -> Remove items
+// diff.insertIndicesAsc -> Insert items
+```
+
 ## Configuration options
 `TreeBuilder.build` accepts flags to fine-tune output:
 - `expandFoldersByDefault` toggles initial expansion state
