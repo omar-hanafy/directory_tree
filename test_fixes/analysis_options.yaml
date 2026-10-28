@@ -1,0 +1,6 @@
+# Standalone options for the dart fix goldens: no include, so the package's
+# lints do not add their own fixes to the expected output. The root
+# analysis_options.yaml excludes this directory from normal analysis.
+linter:
+  rules:
+    - deprecated_member_use_from_same_package
