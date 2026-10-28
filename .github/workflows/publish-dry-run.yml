@@ -27,6 +27,13 @@ jobs:
       - name: Install dependencies
         run: dart pub get
 
+      # What is published must resolve from pub.dev exactly as users resolve
+      # it: no pubspec_overrides.yaml, and no path, git, or overridden
+      # dependency in the root pubspec.yaml. The benchmark packages are not
+      # published, so they are not checked.
+      - name: Release checks
+        run: dart run tool/check_repo.dart --release
+
       # Warnings are fatal here; never add --ignore-warnings.
       - name: Pub publish dry-run
         run: dart pub publish --dry-run
