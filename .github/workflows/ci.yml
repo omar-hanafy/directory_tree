@@ -110,6 +110,31 @@ jobs:
       - name: Test
         run: dart test --compiler source
 
+  # The path parser is tested with literal Windows paths everywhere, but the
+  # dart:io scanner only meets real drive letters, backslashes, and Windows
+  # file semantics here. Not a required check, so a runner outage cannot
+  # block a release; a red run still blocks review.
+  test-windows:
+    name: CI / Test on Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Dart (stable)
+        uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: stable
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Test (VM)
+        run: dart test
+
   test-beta:
     name: CI / Test on beta
     runs-on: ubuntu-latest

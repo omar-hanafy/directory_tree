@@ -1,2 +1,4 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Normalize text files to LF in the repository and in every checkout, including
+# Windows runners, so the formatter, README tests, and goldens see the same
+# bytes on every platform.
+* text=auto eol=lf
