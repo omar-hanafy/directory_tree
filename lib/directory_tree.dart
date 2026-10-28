@@ -1,37 +1,65 @@
-/// The core entry point for the `directory_tree` package.
+/// Deterministic, immutable directory trees for pure Dart.
 ///
-/// Use this library to build, manage, and interact with virtual file system trees.
-/// It provides a deterministic way to transform flat lists of files into
-/// hierarchical structures, suitable for file explorers in Flutter or CLIs.
+/// Feed a list of paths (from a file picker, `git ls-files`, a server
+/// response, or a scanner) and get an indexed tree that is identical however
+/// the input was ordered. Paths are parsed without touching the file system,
+/// so Windows, POSIX, and UNC paths behave the same on every platform,
+/// including the web.
 ///
-/// ### Core Behavior
+/// ## Quick start
 ///
-/// *   **Construct:** Use [TreeBuilder] to normalize paths and group files into a
-///     [TreeData] graph.
-/// *   **Traverse:** Use [FlattenStrategy] (like [DefaultFlattenStrategy]) to
-///     convert the graph into a linear list for rendering.
-/// *   **Interact:** Manage UI state with [ExpansionSet] and [SelectionSet], and
-///     compute UI updates with [diffVisibleNodes].
+/// ```dart
+/// import 'package:directory_tree/directory_tree.dart';
 ///
-/// ### Key Components
+/// void main() {
+///   final tree = DirectoryTree.fromPaths([
+///     '/repo/lib/src/tree.dart',
+///     '/repo/lib/main.dart',
+///     '/repo/README.md',
+///   ]);
 ///
-/// *   [TreeEntry]: The raw input item (file/entity).
-/// *   [TreeBuilder]: The engine that produces the tree.
-/// *   [TreeData]: The immutable result holding the graph.
-/// *   [TreeNode]: A single vertex in the graph.
+///   for (final node in tree.nodes) {
+///     print('${'  ' * node.depth}${node.label}');
+///   }
+///   // repo
+///   //   lib
+///   //     src
+///   //       tree.dart
+///   //     main.dart
+///   //   README.md
+/// }
+/// ```
+///
+/// ## Building blocks
+///
+/// * [TreePath] and [PathPolicy]: canonical paths and the rules for parsing
+///   them (separators, case sensitivity, Unicode normalization).
+/// * [TreeEntry]: one input path with its kind and optional data.
+/// * [DirectoryTree]: the immutable tree, stored in pre-order with O(1)
+///   lookup by [NodeId] and O(1) subtree ranges. Build it with
+///   [DirectoryTree.build] or incrementally with a [DirectoryTreeBuilder].
+/// * [TreeOptions]: which nodes are top level ([TreeRoots]) and how
+///   siblings are ordered ([TreeOrder]).
+/// * [TreeIssue]: inputs that were skipped, reported instead of thrown.
+/// * [TreeFilter]: node predicates for filtered views.
 library;
 
-export 'src/builder/tree_builder.dart';
-export 'src/models/tree_data.dart';
-export 'src/models/tree_entry.dart';
-export 'src/models/tree_node.dart';
-export 'src/ops/flatten.dart';
-export 'src/ops/list_diff.dart';
-export 'src/ops/path_utils.dart';
-export 'src/ops/reveal.dart';
-export 'src/ops/search_filter.dart';
-export 'src/ops/selection_utils.dart';
-export 'src/ops/sort_delegate.dart';
-export 'src/ops/visible_node.dart';
-export 'src/state/expansion_state.dart';
-export 'src/state/selection_state.dart';
+// Imported only so the references in the library documentation resolve.
+import 'package:directory_tree/src/filter/tree_filter.dart';
+import 'package:directory_tree/src/path/path_policy.dart';
+import 'package:directory_tree/src/path/tree_path.dart';
+import 'package:directory_tree/src/tree/directory_tree.dart';
+import 'package:directory_tree/src/tree/node_id.dart';
+import 'package:directory_tree/src/tree/tree_entry.dart';
+import 'package:directory_tree/src/tree/tree_issue.dart';
+import 'package:directory_tree/src/tree/tree_options.dart';
+
+export 'package:directory_tree/src/filter/tree_filter.dart';
+export 'package:directory_tree/src/path/path_policy.dart';
+export 'package:directory_tree/src/path/tree_path.dart' show TreePath;
+export 'package:directory_tree/src/tree/directory_tree.dart';
+export 'package:directory_tree/src/tree/node_id.dart';
+export 'package:directory_tree/src/tree/tree_entry.dart';
+export 'package:directory_tree/src/tree/tree_issue.dart';
+export 'package:directory_tree/src/tree/tree_options.dart'
+    show NodeComparator, TreeOptions, TreeOrder, TreeRoots;

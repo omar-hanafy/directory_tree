@@ -103,8 +103,12 @@ jobs:
       - name: Analyze
         run: dart analyze
 
+      # The downgraded frontend_server_client looks for
+      # frontend_server.dart.snapshot, which Dart 3.8.0 no longer ships (only
+      # the AOT snapshot), so the default compiler cannot start. Source mode
+      # runs the same suites on the downgraded dependency graph.
       - name: Test
-        run: dart test
+        run: dart test --compiler source
 
   test-beta:
     name: CI / Test on beta
