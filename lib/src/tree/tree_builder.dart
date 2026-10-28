@@ -213,10 +213,14 @@ final class _BuilderItem<T> {
 
 /// An entry that parsed and is still a candidate for the tree.
 final class _Candidate<T> {
-  _Candidate(this.entry, this.path, this.position);
+  _Candidate(this.entry, this.path, this.key, this.position);
 
   final TreeEntry<T> entry;
   final TreePath path;
+
+  /// The policy id of [path]; also the id of the entry's node, since node
+  /// spellings only differ from [path] in letter case, which ids fold.
+  final NodeId key;
 
   /// Index in the builder's entry order; issues are reported in this order.
   final int position;
@@ -337,7 +341,7 @@ final class _TreeAssembler<T> {
           message: 'A file entry cannot be a path root; the entry was skipped.',
         );
       } else {
-        candidates.add(_Candidate<T>(entry, path, i));
+        candidates.add(_Candidate<T>(entry, path, item.key!, i));
       }
     }
     return candidates;
@@ -545,7 +549,9 @@ final class _TreeAssembler<T> {
       root
         ..isRoot = true
         ..path = _rootPath(root)
-        ..id = policy.idOf(root.path);
+        // A root with an entry uses the entry's parsed path, whose id the
+        // builder already computed.
+        ..id = root.candidate?.key ?? policy.idOf(root.path);
       order.add(root);
     }
     for (var i = 0; i < order.length; i++) {
@@ -553,11 +559,36 @@ final class _TreeAssembler<T> {
       final children = slot.children;
       if (children == null) continue;
       for (final child in children.values) {
-        final spelling = child.candidate?.path.segments.last ?? child.implied!;
-        child
-          ..depth = slot.depth + 1
-          ..path = appendTreePathSegment(slot.path, spelling)
-          ..id = policy.idOf(child.path);
+        child.depth = slot.depth + 1;
+        final candidate = child.candidate;
+        if (candidate == null) {
+          child
+            ..path = appendTreePathSegment(slot.path, child.implied!)
+            ..id = policy.idOf(child.path);
+        } else {
+          // An entry node shares its entry's strings instead of building
+          // equal copies: the parsed canonical string whenever the parents
+          // are spelled as in the entry (for an already canonical input it
+          // is the entry's path string itself), and the id, which only
+          // folds letter case. A case-sensitive policy keys slots by exact
+          // spelling, so there the parents always match and need no check.
+          final parsed = candidate.path;
+          final name = parsed.name;
+          final string = parsed.toString();
+          final shared =
+              policy.caseSensitive || isChildString(slot.path, name, string);
+          child
+            ..path = appendTreePathSegment(
+              slot.path,
+              name,
+              canonical: shared ? string : null,
+            )
+            ..id = candidate.key;
+        }
+        assert(
+          child.id == policy.idOf(child.path),
+          'A node id must be the policy id of its display path.',
+        );
         order.add(child);
       }
     }
@@ -578,13 +609,14 @@ final class _TreeAssembler<T> {
       final slot = order[i];
       final entry = slot.candidate?.entry;
       final parentId = slot.isRoot ? null : slot.parent!.id;
-      final label = slot.isRoot ? slot.label : slot.path.name;
       if (entry != null && entry.isFile) {
+        // Files contribute their parent directory, so every top-level node
+        // is a directory and a file's label is always its name.
+        assert(!slot.isRoot, 'A file cannot be a top-level node.');
         fileCount++;
         slot.node = FileNode<T>._(
           id: slot.id,
           path: slot.path,
-          label: label,
           parent: parentId,
           depth: slot.depth,
           entry: entry,
@@ -605,7 +637,7 @@ final class _TreeAssembler<T> {
       slot.node = DirectoryNode<T>._(
         id: slot.id,
         path: slot.path,
-        label: label,
+        label: slot.isRoot ? slot.label : slot.path.name,
         parent: parentId,
         depth: slot.depth,
         entry: entry,

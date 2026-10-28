@@ -15,7 +15,6 @@ sealed class TreeNode<T> {
   TreeNode._({
     required this.id,
     required this.path,
-    required this.label,
     required this.parent,
     required this.depth,
     required this.entry,
@@ -47,7 +46,9 @@ sealed class TreeNode<T> {
   /// path that is unique among the top-level labels, such as `a/src` and
   /// `b/src`, falling back to the full canonical path string (for example
   /// `C:/src` and `D:/src`).
-  final String label;
+  // Top-level nodes are always directories, so only DirectoryNode stores a
+  // label; a FileNode's label is its name, which saves a field per file.
+  String get label;
 
   /// The id of the parent node, or `null` for top-level nodes.
   final NodeId? parent;
@@ -130,11 +131,13 @@ final class FileNode<T> extends TreeNode<T> {
   FileNode._({
     required super.id,
     required super.path,
-    required super.label,
     required super.parent,
     required super.depth,
     required super.entry,
   }) : super._();
+
+  @override
+  String get label => path.name;
 
   @override
   TreeNodeKind get kind => TreeNodeKind.file;
@@ -151,12 +154,15 @@ final class DirectoryNode<T> extends TreeNode<T> {
   DirectoryNode._({
     required super.id,
     required super.path,
-    required super.label,
+    required this.label,
     required super.parent,
     required super.depth,
     required super.entry,
     required this.children,
   }) : super._();
+
+  @override
+  final String label;
 
   /// The ids of the direct children, in [TreeOptions.order].
   ///

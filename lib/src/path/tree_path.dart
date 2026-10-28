@@ -28,9 +28,28 @@ import 'package:meta/meta.dart';
 /// Every operation is pure; a [TreePath] never touches the file system.
 @immutable
 final class TreePath implements Comparable<TreePath> {
-  TreePath._(this.root, this.segments) : _string = _format(root, segments);
+  // A path is stored in one of two forms, chosen by whoever creates it:
+  //
+  // * List form: [_link] is the full, unmodifiable segment list (empty for
+  //   path roots). Parsing, [child], [relativeTo], and [parent] of a parsed
+  //   path create this form; it owns its list and keeps nothing else alive.
+  // * Chain form: [_link] is the parent path and [_name] the last segment.
+  //   The tree builder creates the paths of tree nodes in this form, where
+  //   every parent is the path of the parent node and is kept alive by the
+  //   tree anyway, so a node path costs one small object instead of a copy
+  //   of all its ancestors' segments. [segments] is computed on first use.
+  //
+  // Both forms keep the canonical string, so equality, hashing, and order
+  // never depend on the form.
 
-  TreePath._raw(this.root, this.segments, this._string);
+  TreePath._(this.root, List<String> segments, this._string)
+    : _link = segments,
+      _name = segments.isEmpty ? '' : segments.last;
+
+  TreePath._child(TreePath parent, String name, this._string)
+    : root = parent.root,
+      _link = parent,
+      _name = name;
 
   /// Parses [path] with the default `const PathPolicy()`.
   ///
@@ -54,14 +73,23 @@ final class TreePath implements Comparable<TreePath> {
   /// Two paths can only contain one another when their roots are equal.
   final String root;
 
+  /// The segment list (list form) or the parent path (chain form).
+  final Object _link;
+
+  /// The last segment, or `''` for a path root.
+  final String _name;
+
+  final String _string;
+
   /// The path segments below [root], outermost first.
   ///
   /// The list is unmodifiable and never contains `''`, `.`, or `..`.
   /// Segments never contain `/`; they contain `\` only when the parsing
   /// policy did not treat `\` as a separator.
-  final List<String> segments;
-
-  final String _string;
+  ///
+  /// The paths of tree nodes build this list on first access, in
+  /// O(segments), and keep it; every later access is O(1).
+  late final List<String> segments = _segmentList();
 
   /// Whether this path has a root, that is, whether [root] is not empty.
   bool get isAbsolute => root.isNotEmpty;
@@ -70,14 +98,15 @@ final class TreePath implements Comparable<TreePath> {
   ///
   /// Path roots have no [parent]. Not to be confused with
   /// `TreeNode.isRoot`, which marks top-level nodes of a tree.
-  bool get isRoot => segments.isEmpty;
+  // Segment names are never empty, so only a path root has an empty name.
+  bool get isRoot => _name.isEmpty;
 
   /// The last segment, or a display name for a path root.
   ///
   /// Path roots are named `/` (POSIX), `C:` (drive), `//server/share` (UNC),
   /// and `.` (the relative root).
   String get name {
-    if (segments.isNotEmpty) return segments.last;
+    if (_name.isNotEmpty) return _name;
     if (root.isEmpty) return '.';
     if (root == '/') return '/';
     return root.substring(0, root.length - 1);
@@ -91,8 +120,7 @@ final class TreePath implements Comparable<TreePath> {
   /// roots. Only the last extension is returned: `archive.tar.gz` has the
   /// extension `.gz`.
   String get extension {
-    if (segments.isEmpty) return '';
-    final last = segments.last;
+    final last = _name;
     final dot = last.lastIndexOf('.');
     if (dot <= 0 || dot == last.length - 1) return '';
     return last.substring(dot);
@@ -101,16 +129,22 @@ final class TreePath implements Comparable<TreePath> {
   /// The path without its last segment, or `null` for path roots.
   ///
   /// The parent of `/a/b` is `/a`; the parent of `/a` is `/`; the parent of
-  /// the relative path `a` is the relative root `.`. Runs in O(segments).
+  /// the relative path `a` is the relative root `.`. Runs in O(1) for the
+  /// paths of tree nodes and in O(segments) at most otherwise.
   TreePath? get parent {
-    final count = segments.length;
+    final link = _link;
+    if (link is TreePath) return link;
+    final list = link as List<String>;
+    final count = list.length;
     if (count == 0) return null;
-    if (count == 1) return TreePath._(root, const <String>[]);
+    if (count == 1) {
+      return TreePath._(root, const <String>[], root.isEmpty ? '.' : root);
+    }
     // The canonical string ends with '/' and the last segment.
-    return TreePath._raw(
+    return TreePath._(
       root,
-      List<String>.unmodifiable(<String>[...segments]..removeLast()),
-      _string.substring(0, _string.length - segments.last.length - 1),
+      List<String>.unmodifiable(list.sublist(0, count - 1)),
+      _string.substring(0, _string.length - _name.length - 1),
     );
   }
 
@@ -126,10 +160,17 @@ final class TreePath implements Comparable<TreePath> {
   @useResult
   TreePath child(String name) {
     _checkSegmentName(name);
-    if (segments.isEmpty && _isServerOnlyRoot(root)) {
-      return TreePath._('$root$name/', const <String>[]);
+    if (isRoot && _isServerOnlyRoot(root)) {
+      return TreePath._('$root$name/', const <String>[], '$root$name/');
     }
-    return appendTreePathSegment(this, name);
+    // List form: a chain would keep every intermediate path of repeated
+    // child calls alive. Reading the segments without [segments] leaves
+    // this path's lazy list unbuilt.
+    return TreePath._(
+      root,
+      List<String>.unmodifiable(<String>[..._segmentList(), name]),
+      _childString(this, name),
+    );
   }
 
   /// Whether [ancestor] strictly contains this path.
@@ -138,8 +179,20 @@ final class TreePath implements Comparable<TreePath> {
   /// a proper prefix of this path's segments. The comparison is exact and
   /// case sensitive; a path is not within itself. For policy-aware
   /// (case-insensitive) containment, compare ids from [PathPolicy.idOf].
-  bool isWithin(TreePath ancestor) =>
-      segments.length > ancestor.segments.length && _startsWith(ancestor);
+  bool isWithin(TreePath ancestor) {
+    if (isRoot || root != ancestor.root) return false;
+    if (ancestor.isRoot) return true;
+    // Segments never contain '/', so the segments of [ancestor] are a
+    // prefix of this path's exactly when its canonical string is a prefix
+    // of this one's that ends at a '/'. Both strings start with the same
+    // root, and a relative path gets its './' prefix from its first
+    // segment, which a contained path shares.
+    final prefix = ancestor._string;
+    final string = _string;
+    return string.length > prefix.length &&
+        string.codeUnitAt(prefix.length) == _slash &&
+        string.startsWith(prefix);
+  }
 
   /// The relative path that leads from [ancestor] to this path.
   ///
@@ -149,21 +202,43 @@ final class TreePath implements Comparable<TreePath> {
   /// exact and case sensitive, like [isWithin].
   @useResult
   TreePath? relativeTo(TreePath ancestor) {
-    final start = ancestor.segments.length;
-    if (segments.length < start || !_startsWith(ancestor)) return null;
-    return TreePath._(
-      '',
-      List<String>.unmodifiable(<String>[...segments]..removeRange(0, start)),
-    );
+    if (this == ancestor) return TreePath._('', const <String>[], '.');
+    if (!isWithin(ancestor)) return null;
+    return createTreePath('', _segmentList().sublist(ancestor._segmentCount()));
   }
 
-  bool _startsWith(TreePath ancestor) {
-    if (root != ancestor.root) return false;
-    final prefix = ancestor.segments;
-    for (var i = 0; i < prefix.length; i++) {
-      if (segments[i] != prefix[i]) return false;
+  /// [segments] without storing it in the lazy field: the list of a list
+  /// form path, or a new list for a chain form path, in O(segments).
+  List<String> _segmentList() {
+    final names = <String>[];
+    var path = this;
+    for (;;) {
+      final link = path._link;
+      if (link is! TreePath) {
+        // A list form path: a parsed path or a path root. Its list is
+        // already unmodifiable.
+        final prefix = link as List<String>;
+        if (names.isEmpty) return prefix;
+        return List<String>.unmodifiable(<String>[
+          ...prefix,
+          ...names.reversed,
+        ]);
+      }
+      names.add(path._name);
+      path = link;
     }
-    return true;
+  }
+
+  /// The number of [segments], without building the list. O(segments).
+  int _segmentCount() {
+    var count = 0;
+    var path = this;
+    for (;;) {
+      final link = path._link;
+      if (link is! TreePath) return count + (link as List<String>).length;
+      count++;
+      path = link;
+    }
   }
 
   /// Orders paths by their canonical strings, by exact code units.
@@ -227,9 +302,7 @@ TreePath createTreePath(
   String? canonical,
 }) {
   final copy = List<String>.unmodifiable(segments);
-  return canonical == null
-      ? TreePath._(root, copy)
-      : TreePath._raw(root, copy, canonical);
+  return TreePath._(root, copy, canonical ?? TreePath._format(root, copy));
 }
 
 /// The canonical string of a non-root path from its [root], its [first]
@@ -244,29 +317,58 @@ String canonicalPathString(String root, String first, String joined) {
 }
 
 /// Returns [parent] with [name] appended, skipping [TreePath.child]'s name
-/// validation.
+/// validation, as a path that refers to [parent] instead of copying its
+/// segments.
 ///
-/// Package-internal: the tree builder uses it for segments that a policy
-/// parsed, which may legitimately contain `\` when the policy does not treat
-/// `\` as a separator. [parent] must not be a server-only UNC root.
+/// Package-internal: the tree builder uses it for the path of every node
+/// below a top-level node, whose parent path the tree keeps anyway. The
+/// segments are names a policy parsed, which may legitimately contain `\`
+/// when the policy does not treat `\` as a separator. [parent] must not be a
+/// server-only UNC root. Pass [canonical] only when it equals the canonical
+/// string of the result (see [isChildString]), so an existing string, such
+/// as the parsed path of the node's entry, is shared instead of copied.
 @internal
-TreePath appendTreePathSegment(TreePath parent, String name) {
-  final segments = parent.segments;
-  final String string;
-  if (segments.isNotEmpty) {
-    string = '${parent._string}/$name';
-  } else if (parent.root.isEmpty) {
-    string = _isDriveLike(name) ? './$name' : name;
-  } else {
-    string = '${parent.root}$name';
-  }
-  // A spread copy is several times faster than copying through an iterator
-  // (followedBy, getRange), and the builder appends once per node.
-  return TreePath._raw(
-    parent.root,
-    List<String>.unmodifiable(<String>[...segments, name]),
-    string,
+TreePath appendTreePathSegment(
+  TreePath parent,
+  String name, {
+  String? canonical,
+}) {
+  assert(
+    canonical == null || canonical == _childString(parent, name),
+    'The canonical string must be the one of the appended path.',
   );
+  return TreePath._child(parent, name, canonical ?? _childString(parent, name));
+}
+
+/// Whether [string] is the canonical string of [parent] with the segment
+/// [name] appended, checked without building that string.
+///
+/// Package-internal: lets the tree builder reuse an entry's canonical string
+/// for its node. Runs in O(length of [string]).
+@internal
+bool isChildString(TreePath parent, String name, String string) {
+  final String prefix;
+  if (!parent.isRoot) {
+    prefix = parent._string;
+    if (string.length != prefix.length + 1 + name.length ||
+        string.codeUnitAt(prefix.length) != _slash) {
+      return false;
+    }
+  } else if (parent.root.isNotEmpty) {
+    prefix = parent.root;
+    if (string.length != prefix.length + name.length) return false;
+  } else {
+    prefix = _isDriveLike(name) ? './' : '';
+    if (string.length != prefix.length + name.length) return false;
+  }
+  return string.startsWith(prefix) && string.endsWith(name);
+}
+
+/// The canonical string of [parent] with the segment [name] appended.
+String _childString(TreePath parent, String name) {
+  if (!parent.isRoot) return '${parent._string}/$name';
+  if (parent.root.isEmpty) return _isDriveLike(name) ? './$name' : name;
+  return '${parent.root}$name';
 }
 
 const int _slash = 0x2F;

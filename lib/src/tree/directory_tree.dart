@@ -81,8 +81,11 @@ final class DirectoryTree<T> {
   /// fixed roots are skipped and listed in [issues].
   ///
   /// Runs in O(L + n log n) for L total path length and n nodes, plus the
-  /// size of the node paths and ids it creates. To build incrementally, use
-  /// a [DirectoryTreeBuilder].
+  /// size of the node paths and ids it creates. An entry whose path is
+  /// already canonical (such as `/repo/lib/a.dart`) lends that string to its
+  /// node's id and path instead of a copy, so a tree of canonical paths
+  /// stores each path string once. To build incrementally, use a
+  /// [DirectoryTreeBuilder].
   factory DirectoryTree.build(
     Iterable<TreeEntry<T>> entries, {
     TreeOptions options = const TreeOptions(),

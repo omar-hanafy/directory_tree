@@ -182,6 +182,24 @@ final class PathPolicy {
     if (segments.isEmpty || !canonicalText) {
       return createTreePath(root, segments);
     }
+    // An input that is already canonical (the common case for generated or
+    // scanned paths) is its own canonical string. Reusing it, instead of an
+    // equal copy, lets a tree share one string between an entry's path, its
+    // node's id, and its node's path.
+    if (lastEnd == length && firstStart == root.length) {
+      if (root.isEmpty) {
+        // canonicalPathString returns [input] itself unless the first
+        // segment needs the './' prefix.
+        return createTreePath(
+          root,
+          segments,
+          canonical: canonicalPathString(root, segments.first, input),
+        );
+      }
+      if (input.startsWith(root)) {
+        return createTreePath(root, segments, canonical: input);
+      }
+    }
     return createTreePath(
       root,
       segments,

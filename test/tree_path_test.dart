@@ -224,6 +224,16 @@ void main() {
         TreePath.parse('//s/sh/x').isWithin(TreePath.parse('//s')),
         isFalse,
       );
+      // Relative paths whose first segment looks like a drive print with a
+      // './' prefix; containment still follows the segments.
+      expect(TreePath.parse('./C:/x').isWithin(TreePath.parse('./C:')), isTrue);
+      expect(TreePath.parse('./C:').isWithin(TreePath.parse('.')), isTrue);
+      expect(TreePath.parse('C:/x').isWithin(TreePath.parse('./C:')), isFalse);
+      expect(TreePath.parse('C:x/y').isWithin(TreePath.parse('./C:')), isFalse);
+      expect(
+        TreePath.parse('./C:/x/y').relativeTo(TreePath.parse('./C:')),
+        TreePath.parse('x/y'),
+      );
     });
 
     test('relativeTo returns the remaining segments', () {
@@ -268,6 +278,187 @@ void main() {
         'a',
       ]);
       expect(TreePath.parse('/a').compareTo(TreePath.parse('/a/')), 0);
+    });
+  });
+
+  group('paths of tree nodes', () {
+    // A tree stores the paths of nodes below its top-level nodes as a link
+    // to the parent node's path plus a name, while parsing stores a full
+    // segment list. Every observable behavior must be the same.
+    const inputs = [
+      '/repo/lib/src/a.dart',
+      '/repo/lib/b.dart',
+      '/repo/.env',
+      '/repo/archive.tar.gz',
+      '/Repo/README',
+      r'C:\work\x\y.txt',
+      'c:/work/z',
+      r'\\server\share\docs\a.md',
+      '//server/share/b',
+      'rel/a/b',
+      './C:/x/y',
+      'd:x/e',
+      '/a/b/c/',
+    ];
+    final policies = <String, PathPolicy>{
+      'default': const PathPolicy(),
+      'case insensitive': PathPolicy.caseInsensitive,
+      'no backslash': const PathPolicy(backslashIsSeparator: false),
+    };
+
+    void expectSamePath(TreePath path, TreePath parsed, String reason) {
+      expect(path, parsed, reason: reason);
+      expect(path.hashCode, parsed.hashCode, reason: reason);
+      expect(path.compareTo(parsed), 0, reason: reason);
+      expect(path.toString(), parsed.toString(), reason: reason);
+      expect(path.root, parsed.root, reason: reason);
+      expect(path.segments, parsed.segments, reason: reason);
+      expect(path.isRoot, parsed.isRoot, reason: reason);
+      expect(path.isAbsolute, parsed.isAbsolute, reason: reason);
+      expect(path.name, parsed.name, reason: reason);
+      expect(path.extension, parsed.extension, reason: reason);
+      expect(path.parent, parsed.parent, reason: reason);
+      expect(path.child('x'), parsed.child('x'), reason: reason);
+      expect(() => path.segments.add('x'), throwsUnsupportedError);
+    }
+
+    policies.forEach((name, policy) {
+      test('behave like their parsed equivalents ($name)', () {
+        final tree = DirectoryTree.fromPaths(
+          inputs,
+          options: TreeOptions(
+            paths: policy,
+            roots: const TreeRoots.filesystem(),
+          ),
+        );
+        expect(tree.length, greaterThan(20));
+        for (final node in tree.nodes) {
+          final path = node.path;
+          final parsed = policy.parse(path.toString());
+          expectSamePath(path, parsed, '$path');
+          // Containment against every ancestor and against a sibling.
+          for (final ancestor in tree.ancestorsOf(node.id)) {
+            final other = ancestor.path;
+            final otherParsed = policy.parse(other.toString());
+            expect(path.isWithin(other), isTrue, reason: '$path in $other');
+            expect(other.isWithin(path), isFalse, reason: '$other in $path');
+            expect(
+              path.relativeTo(other),
+              parsed.relativeTo(otherParsed),
+              reason: '$path from $other',
+            );
+            expect(
+              path.relativeTo(other)!.segments,
+              parsed.segments.sublist(otherParsed.segments.length),
+            );
+          }
+          expect(path.relativeTo(path), TreePath.parse('.'));
+          final parent = tree.parentOf(node.id);
+          if (parent != null) {
+            for (final sibling in tree.childrenOf(parent.id)) {
+              if (sibling.id == node.id) continue;
+              expect(path.isWithin(sibling.path), isFalse);
+              expect(path.relativeTo(sibling.path), isNull);
+            }
+          }
+        }
+      });
+    });
+
+    test('parent is the identical path of the parent node', () {
+      final tree = DirectoryTree.fromPaths(inputs);
+      for (final node in tree.nodes) {
+        final parent = tree.parentOf(node.id);
+        if (parent == null) continue;
+        expect(identical(node.path.parent, parent.path), isTrue);
+      }
+    });
+
+    test('a deep chain answers without recursion', () {
+      const depth = 3000;
+      final leaf = '/${List<String>.filled(depth, 'd').join('/')}/leaf.txt';
+      // Filesystem roots materialize every directory below '/', so the
+      // leaf's path links through 3001 node paths.
+      final tree = DirectoryTree.fromPaths([
+        leaf,
+      ], options: const TreeOptions(roots: TreeRoots.filesystem()));
+      expect(tree.length, depth + 2);
+      final path = tree.nodeAt(leaf)!.path;
+      expect(path.segments.length, depth + 1);
+      expect(path.segments.first, 'd');
+      expect(path.name, 'leaf.txt');
+      expect(path.isWithin(tree.rootNodes.single.path), isTrue);
+      expect(path.isWithin(TreePath.parse('/d/d')), isTrue);
+      expect(path.relativeTo(TreePath.parse('/d'))!.segments.length, depth);
+      expect(path.child('x').segments.length, depth + 2);
+      var steps = 0;
+      for (TreePath? up = path; up != null; up = up.parent) {
+        steps++;
+      }
+      expect(steps, depth + 2);
+    });
+
+    test('a parsed path of 20000 segments supports every operation', () {
+      const depth = 20000;
+      final text = '/${List<String>.filled(depth, 's').join('/')}';
+      final path = TreePath.parse(text);
+      expect(path.segments.length, depth);
+      expect(path.parent!.segments.length, depth - 1);
+      expect(path.child('x').segments.length, depth + 1);
+      expect(path.isWithin(TreePath.parse('/s')), isTrue);
+      expect(path.relativeTo(TreePath.parse('/s/s'))!.segments.length, 19998);
+      expect(TreePath.parse(path.toString()), path);
+    });
+  });
+
+  group('canonical strings are shared, not copied', () {
+    test('an already canonical input is its own canonical string', () {
+      for (final input in [
+        '/a/b.txt',
+        'C:/a/b',
+        '//server/share/x',
+        'rel/a',
+        'C:foo',
+      ]) {
+        expect(identical(TreePath.parse(input).toString(), input), isTrue);
+      }
+      // Inputs that need changes get an equal new string.
+      for (final (input, canonical) in [
+        ('/a//b', '/a/b'),
+        ('/a/b/', '/a/b'),
+        ('c:/a', 'C:/a'),
+        (r'C:\a', 'C:/a'),
+        ('//server//share/x', '//server/share/x'),
+        ('./a', 'a'),
+        ('/./a', '/a'),
+        ('a/../C:/x', './C:/x'),
+      ]) {
+        expect(TreePath.parse(input).toString(), canonical, reason: input);
+      }
+    });
+
+    test('a canonical entry path is shared by its node id and path', () {
+      const input = '/repo/lib/a.dart';
+      final tree = DirectoryTree.fromPaths([input, '/repo/b.dart']);
+      final node = tree.nodeAt(input)!;
+      expect(identical(node.id.value, input), isTrue);
+      expect(identical(node.path.toString(), input), isTrue);
+      expect(identical(node.entry!.path, input), isTrue);
+    });
+
+    test('a node spelled unlike its entry keeps the entry id', () {
+      // Case-insensitive: the directory takes the smallest spelling 'Repo',
+      // so the node of '/repo/b.txt' is displayed as '/Repo/b.txt'.
+      const options = TreeOptions(paths: PathPolicy.caseInsensitive);
+      const lower = '/repo/b.txt';
+      final tree = DirectoryTree.fromPaths([
+        '/Repo/a.txt',
+        lower,
+      ], options: options);
+      final node = tree.nodeAt(lower)!;
+      expect(node.path.toString(), '/Repo/b.txt');
+      expect(identical(node.id.value, lower), isTrue);
+      expect(node.id, options.paths.idOf(node.path));
     });
   });
 
