@@ -1,12 +1,16 @@
 import 'dart:collection';
 import 'dart:typed_data';
 
+import 'package:directory_tree/src/filter/tree_filter.dart';
 import 'package:directory_tree/src/path/path_policy.dart';
 import 'package:directory_tree/src/path/tree_path.dart';
 import 'package:directory_tree/src/tree/node_id.dart';
 import 'package:directory_tree/src/tree/tree_entry.dart';
 import 'package:directory_tree/src/tree/tree_issue.dart';
 import 'package:directory_tree/src/tree/tree_options.dart';
+import 'package:directory_tree/src/view/expansion_state.dart';
+import 'package:directory_tree/src/view/tree_renderer.dart';
+import 'package:directory_tree/src/view/tree_rows.dart';
 import 'package:meta/meta.dart';
 
 part 'tree_builder.dart';
@@ -325,6 +329,127 @@ final class DirectoryTree<T> {
     update(builder);
     return builder.build();
   }
+
+  /// Returns the visible rows of a tree view of this tree, in display
+  /// order.
+  ///
+  /// This is the bridge to a UI: [TreeRows] is a [List] of [TreeRow]s that a
+  /// virtualized list view shows directly, each with a stable key
+  /// ([TreeRow.id]), indentation, expand arrow, connector lines, and label.
+  /// Keep the result and update it with [TreeRows.toggleNode],
+  /// [TreeRows.expandNode], and [TreeRows.collapseNode], which only build
+  /// the rows that change, instead of flattening again.
+  ///
+  /// The rows are this tree's pre-order restricted to visible nodes: a
+  /// top-level node is visible, and a child is visible when its parent's row
+  /// is visible and expanded.
+  ///
+  /// * [expansion] decides which directories show their children. Defaults
+  ///   to every directory expanded.
+  /// * [filter] keeps only the nodes that match it or have a matching
+  ///   descendant; [TreeRow.isMatch] tells the two apart. A `null` filter,
+  ///   or one that reports [TreeFilter.matchesAll] (such as an empty search
+  ///   query), shows every node. The filter is called exactly once per node
+  ///   and never again by updates of the returned rows.
+  /// * [expandMatches] (default true) adds every ancestor of every match to
+  ///   [expansion] before flattening, so all matches are visible. The rows'
+  ///   [TreeRows.expansion] is that effective state, so the user can still
+  ///   collapse revealed directories. With false, [expansion] is used as
+  ///   given and matches inside collapsed directories stay hidden. Without a
+  ///   filter it has no effect.
+  /// * [compactFolders] shows a directory whose only child is a directory on
+  ///   one row with that child, repeatedly (`lib/src/utils`), as VS Code
+  ///   does. Compaction follows the tree structure, not the filter; the row
+  ///   expands and collapses as its deepest directory ([TreeRow.node]).
+  ///
+  /// ```dart
+  /// final tree = DirectoryTree.fromPaths([
+  ///   '/repo/lib/main.dart',
+  ///   '/repo/lib/src/tree.dart',
+  ///   '/repo/README.md',
+  /// ]);
+  /// var rows = tree.flatten(expansion: const ExpansionState.collapsed());
+  /// print(rows.map((row) => row.label)); // (repo)
+  /// rows = rows.toggleNode(rows.first.id);
+  /// print(rows.map((row) => row.label)); // (repo, lib, README.md)
+  /// ```
+  ///
+  /// An empty tree, or a filter that matches nothing, gives empty rows.
+  /// Without a filter this runs in O(rows): each collapsed directory's
+  /// subtree is skipped in O(1). With a filter it runs in O(n) for n nodes
+  /// and keeps about 9 bytes per node of match results, which the returned
+  /// rows share with every update. Uses no recursion, so depth is
+  /// unlimited.
+  @useResult
+  TreeRows<T> flatten({
+    ExpansionState expansion = const ExpansionState.expanded(),
+    TreeFilter? filter,
+    bool expandMatches = true,
+    bool compactFolders = false,
+  }) => flattenTree<T>(
+    this,
+    expansion: expansion,
+    filter: filter,
+    expandMatches: expandMatches,
+    compactFolders: compactFolders,
+  );
+
+  /// Renders this tree as text, one line per visible row, like the `tree`
+  /// command.
+  ///
+  /// ```dart
+  /// final tree = DirectoryTree.fromPaths([
+  ///   '/repo/lib/main.dart',
+  ///   '/repo/lib/src/tree.dart',
+  ///   '/repo/README.md',
+  /// ]);
+  /// print(tree.render());
+  /// // repo/
+  /// // ├── lib/
+  /// // │   ├── src/
+  /// // │   │   └── tree.dart
+  /// // │   └── main.dart
+  /// // └── README.md
+  /// ```
+  ///
+  /// The lines are the rows of `flatten(expansion: expansion, filter:
+  /// filter, compactFolders: compactFolders)`, so a filter reveals its
+  /// matches (`expandMatches` is true) and collapsed directories show
+  /// without their children. Each top-level row starts at the left margin.
+  /// A row at depth `d >= 1` is prefixed, for each ancestor level `1` to
+  /// `d - 1`, with [TreeStyle.pipe] when [TreeRow.guides] is true at that
+  /// level and [TreeStyle.gap] otherwise, then with [TreeStyle.lastBranch]
+  /// when [TreeRow.isLast] and [TreeStyle.branch] otherwise.
+  ///
+  /// * [style] picks the connectors; defaults to [TreeStyle.unicode].
+  /// * [maxDepth] omits rows deeper than it: 0 prints only the top-level
+  ///   rows, `null` (the default) has no limit, and a negative value prints
+  ///   nothing. The remaining rows keep their connectors.
+  /// * [label] returns the text of each row; by default [TreeRow.label],
+  ///   followed by `/` for directories unless the label already ends with
+  ///   `/` (as the POSIX root `/` does).
+  ///
+  /// Lines are joined with `\n`, without a trailing newline; an empty tree
+  /// renders as the empty string. Runs in O(n) with a filter (one filter
+  /// call per node), otherwise in O(rows printed), plus the length of the
+  /// output. Uses no recursion, so depth is unlimited.
+  @useResult
+  String render({
+    TreeStyle style = TreeStyle.unicode,
+    ExpansionState expansion = const ExpansionState.expanded(),
+    TreeFilter? filter,
+    bool compactFolders = false,
+    int? maxDepth,
+    String Function(TreeRow<T> row)? label,
+  }) => renderTree<T>(
+    this,
+    style: style,
+    expansion: expansion,
+    filter: filter,
+    compactFolders: compactFolders,
+    maxDepth: maxDepth,
+    label: label,
+  );
 
   /// Whether [other] is a [DirectoryTree] with equal [options] and equal
   /// [nodes] in the same order.
