@@ -1,6 +1,4 @@
 import 'package:directory_tree/directory_tree.dart';
-import 'package:directory_tree/src/view/expansion_state.dart';
-import 'package:directory_tree/src/view/tree_renderer.dart';
 import 'package:test/test.dart';
 
 /// Hand-checked tree (case sensitive, minimal roots, directories first):

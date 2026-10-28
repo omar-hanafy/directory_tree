@@ -47,6 +47,9 @@
 ///   and tri-state checkbox semantics ([CheckState]).
 /// * [ListDiff] and [TreeDiff]: minimal row diffs for animated lists and
 ///   added, removed, and changed nodes between two trees.
+/// * [ExpansionState], [TreeRows], and [TreeRow]: the visible rows of a tree
+///   for virtualized views, with incremental expand and collapse.
+/// * [TreeStyle]: box-drawing styles for [DirectoryTree.render].
 library;
 
 // Imported only so the references in the library documentation resolve.
@@ -62,6 +65,9 @@ import 'package:directory_tree/src/tree/node_id.dart';
 import 'package:directory_tree/src/tree/tree_entry.dart';
 import 'package:directory_tree/src/tree/tree_issue.dart';
 import 'package:directory_tree/src/tree/tree_options.dart';
+import 'package:directory_tree/src/view/expansion_state.dart';
+import 'package:directory_tree/src/view/tree_renderer.dart';
+import 'package:directory_tree/src/view/tree_rows.dart';
 
 export 'package:directory_tree/src/diff/list_diff.dart';
 export 'package:directory_tree/src/diff/tree_diff.dart';
@@ -76,3 +82,6 @@ export 'package:directory_tree/src/tree/tree_entry.dart';
 export 'package:directory_tree/src/tree/tree_issue.dart';
 export 'package:directory_tree/src/tree/tree_options.dart'
     show NodeComparator, TreeOptions, TreeOrder, TreeRoots;
+export 'package:directory_tree/src/view/expansion_state.dart';
+export 'package:directory_tree/src/view/tree_renderer.dart' show TreeStyle;
+export 'package:directory_tree/src/view/tree_rows.dart' show TreeRow, TreeRows;

@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:directory_tree/directory_tree.dart';
-import 'package:directory_tree/src/view/expansion_state.dart';
 import 'package:test/test.dart';
 
 /// Hand-checked tree (directories first):
