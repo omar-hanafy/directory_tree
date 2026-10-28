@@ -4,7 +4,9 @@
 /// response, or a scanner) and get an indexed tree that is identical however
 /// the input was ordered. Paths are parsed without touching the file system,
 /// so Windows, POSIX, and UNC paths behave the same on every platform,
-/// including the web.
+/// including the web. On top of the tree, the library provides the visible
+/// rows of a tree view, search queries, selection with tri-state
+/// checkboxes, diffs for animated lists, and text rendering.
 ///
 /// ## Quick start
 ///
@@ -15,18 +17,22 @@
 ///   final tree = DirectoryTree.fromPaths([
 ///     '/repo/lib/src/tree.dart',
 ///     '/repo/lib/main.dart',
+///     '/repo/test/tree_test.dart',
 ///     '/repo/README.md',
 ///   ]);
+///   print(tree.render());
+///   // repo/
+///   // ├── lib/
+///   // │   ├── src/
+///   // │   │   └── tree.dart
+///   // │   └── main.dart
+///   // ├── test/
+///   // │   └── tree_test.dart
+///   // └── README.md
 ///
-///   for (final node in tree.nodes) {
-///     print('${'  ' * node.depth}${node.label}');
-///   }
-///   // repo
-///   //   lib
-///   //     src
-///   //       tree.dart
-///   //     main.dart
-///   //   README.md
+///   var rows = tree.flatten(expansion: const ExpansionState.collapsed());
+///   rows = rows.toggleNode(rows.first.id); // the user opened "repo"
+///   print(rows.map((row) => row.label)); // (repo, lib, test, README.md)
 /// }
 /// ```
 ///
@@ -41,15 +47,19 @@
 /// * [TreeOptions]: which nodes are top level ([TreeRoots]) and how
 ///   siblings are ordered ([TreeOrder]).
 /// * [TreeIssue]: inputs that were skipped, reported instead of thrown.
+/// * [ExpansionState], [TreeRows], and [TreeRow]: the visible rows of a tree
+///   for virtualized views, with incremental expand and collapse.
 /// * [TreeFilter] and [TreeQuery]: node predicates and search-box queries
 ///   for filtered views.
 /// * [SelectionState]: single or multiple selection with range selection
 ///   and tri-state checkbox semantics ([CheckState]).
 /// * [ListDiff] and [TreeDiff]: minimal row diffs for animated lists and
 ///   added, removed, and changed nodes between two trees.
-/// * [ExpansionState], [TreeRows], and [TreeRow]: the visible rows of a tree
-///   for virtualized views, with incremental expand and collapse.
 /// * [TreeStyle]: box-drawing styles for [DirectoryTree.render].
+///
+/// To build a tree from a directory on disk, also import
+/// `package:directory_tree/io.dart`. It needs `dart:io`, so it is not
+/// available on the web; this library never imports it.
 library;
 
 // Imported only so the references in the library documentation resolve.
