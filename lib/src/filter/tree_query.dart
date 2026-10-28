@@ -19,7 +19,8 @@ import 'package:meta/meta.dart';
 /// | --- | --- |
 /// | `main` | nodes whose name contains `main` |
 /// | `*.dart`, `test_?.md` | nodes whose whole name matches the glob: `*` is any run of characters (including none), `?` is exactly one character |
-/// | `lib/src`, `src/ut`, `a/src` | nodes whose canonical path string contains the term at an occurrence that reaches into the node's own name: `lib/src` matches `src` in `/r/lib/src` but not `/r/lib/src/utils`, and `src/ut` matches `utils` in `/r/lib/src/utils`; `\` is read as `/` |
+/// | `lib/src`, `src/ut`, `a/src` | nodes whose canonical path string contains the term at an occurrence that reaches the node's own name (ends inside it or exactly where it starts): `lib/src` matches `src` in `/r/lib/src` but not `/r/lib/src/utils`, and `src/ut` matches `utils` in `/r/lib/src/utils`; `\` is read as `/` |
+/// | `lib/`, `lib/src/` | the direct children of directories whose path ends with `lib` or `lib/src` (the same rule: the occurrence ends where each child's name starts), so the view keeps showing results while a path is typed |
 /// | `src/*.dart`, `lib/*/*.g.dart` | nodes whose last k path components, joined with `/`, match the glob, where k is the number of `/`-separated parts of the glob; `**` is the same as `*` |
 /// | `"my notes"` | nodes whose name contains `my notes`; the quoted text is literal, so `"*.g"` searches for `*.g` and `"ext:x"` for `ext:x`; a phrase with `/` (`"my dir/a b"`) matches like `lib/src` |
 /// | `!term` | nodes that do not match `term`; `term` may be any other kind of term, including a quoted phrase |
@@ -36,10 +37,12 @@ import 'package:meta/meta.dart';
 ///   folder row labelled `lib/src/utils` (see `TreeRows.compactFolders`)
 ///   matches `lib/src/utils`, `lib/src`, and `src/ut`, and a disambiguated
 ///   top-level label such as `a/src` ([TreeNode.label]) matches `a/src`.
-///   Only the node whose name the occurrence reaches into matches, not its
-///   descendants, so a view shows the typed folder and its ancestors; a
-///   term that ends with `/` (`lib/`) reaches no name and matches only names
-///   that contain it literally. Such a term still also matches a name that
+///   Only the node whose name the occurrence reaches matches, not its
+///   deeper descendants, so a view shows the typed folder and its
+///   ancestors. A term ending with `/` reaches the names of the folder's
+///   direct children, so typing `l`, `lib`, `lib/`, `lib/s`, `lib/src`,
+///   `lib/src/` keeps matching all the way. The term `/` alone reaches every
+///   name after a separator. Such a term still also matches a name that
 ///   contains it literally, which only happens for path roots such as `/`
 ///   or names with a `\` under a policy where `\` is not a separator.
 /// * Whitespace is any character that [String.trim] removes, including tabs
@@ -90,6 +93,11 @@ import 'package:meta/meta.dart';
 /// final lib = TreeQuery.parse('repo/lib');
 /// tree.nodes.where(lib.matches).map((n) => n.name); // (lib)
 /// lib.matchRanges('repo/lib'); // [(start: 0, end: 8)]
+///
+/// // A trailing `/` lists the folder's contents.
+/// final contents = TreeQuery.parse('repo/lib/');
+/// tree.nodes.where(contents.matches).map((n) => n.name);
+/// // (main.dart, main.g.dart)
 ///
 /// final generated = TreeQuery.parse('lib/*.g.dart');
 /// tree.nodes.where(generated.matches).map((n) => n.name); // (main.g.dart)
@@ -306,7 +314,7 @@ sealed class _Term {
 
 /// A plain term or quoted phrase: the name contains [text], or, for a term
 /// with a separator, the path contains [segmentText] at an occurrence that
-/// reaches into the node's own name.
+/// reaches the node's own name (ends inside it or exactly where it starts).
 final class _TextTerm extends _Term {
   _TextTerm(this.text, this.segmentText, {required super.negated});
 
@@ -329,9 +337,9 @@ final class _TextTerm extends _Term {
     final segment = segmentText;
     if (segment == null) return false;
     // The last occurrence ends furthest right, so it is the only one that
-    // needs checking: it reaches into the name if any occurrence does.
+    // needs checking: it reaches the name if any occurrence does.
     final index = subject.path.lastIndexOf(segment);
-    return index >= 0 && index + segment.length > subject.nameStart;
+    return index >= 0 && index + segment.length >= subject.nameStart;
   }
 }
 

@@ -459,19 +459,44 @@ void main() {
     }
 
     final cases = <String, Set<String>>{
-      // The occurrence must reach into the node's own name.
+      // The occurrence must reach the node's own name: end inside it or
+      // exactly where it starts.
       'lib/src': {'/r/lib/src'},
       'src/ut': {'/r/lib/src/utils'},
       'lib/src/utils': {'/r/lib/src/utils'},
       'r/lib': {'/r/lib'},
       // '/r' also reaches into 'README.md' when case is ignored.
       '/r': {'/r', '/r/README.md'},
-      '/r/': {},
+      '/r/': {'/r/lib', '/r/README.md'},
+      '/': {
+        '/r',
+        '/r/lib',
+        '/r/lib/src',
+        '/r/lib/src/utils',
+        '/r/lib/src/utils/a.dart',
+        '/r/lib/src/utils/gen',
+        '/r/lib/src/utils/gen/x.g.dart',
+        '/r/lib/src/b.dart',
+        '/r/lib/main.dart',
+        '/r/README.md',
+      },
       '/README': {'/r/README.md'},
       'utils/a': {'/r/lib/src/utils/a.dart'},
       'b/s': {'/r/lib/src'},
-      'lib/': {},
-      'lib/src/': {},
+      // A trailing separator lists the folder's direct children.
+      'lib/': {'/r/lib/src', '/r/lib/main.dart'},
+      'lib/src/': {'/r/lib/src/utils', '/r/lib/src/b.dart'},
+      'lib/src/utils/gen/': {'/r/lib/src/utils/gen/x.g.dart'},
+      r'lib\': {'/r/lib/src', '/r/lib/main.dart'},
+      'LIB/SRC/': {'/r/lib/src/utils', '/r/lib/src/b.dart'},
+      'lib/ type:file': {'/r/lib/main.dart'},
+      '!lib/ type:file': {
+        '/r/lib/src/utils/a.dart',
+        '/r/lib/src/utils/gen/x.g.dart',
+        '/r/lib/src/b.dart',
+        '/r/README.md',
+      },
+      'main.dart/': {},
       'nope/src': {},
       // Quoted phrases and backslashes.
       '"lib/src"': {'/r/lib/src'},
@@ -533,10 +558,46 @@ void main() {
       final lib = TreeQuery.parse('repo/lib');
       expect(docs.nodes.where(lib.matches).map((n) => n.name), ['lib']);
       expect(lib.matchRanges('repo/lib'), [(start: 0, end: 8)]);
+      final contents = TreeQuery.parse('repo/lib/');
+      expect(docs.nodes.where(contents.matches).map((n) => n.name), [
+        'main.dart',
+        'main.g.dart',
+      ]);
       final generated = TreeQuery.parse('lib/*.g.dart');
       expect(docs.nodes.where(generated.matches).map((n) => n.name), [
         'main.g.dart',
       ]);
+    });
+
+    test('typing a path character by character never empties the view', () {
+      final typed = DirectoryTree<Never>.build(const [
+        TreeEntry.file('/r/lib/src/a.dart'),
+        TreeEntry.file('/r/README.md'),
+      ]);
+      const steps = ['l', 'li', 'lib', 'lib/', 'lib/s', 'lib/src', 'lib/src/'];
+      const expected = <String, Set<String>>{
+        'l': {'/r/lib'},
+        'li': {'/r/lib'},
+        'lib': {'/r/lib'},
+        'lib/': {'/r/lib/src'},
+        'lib/s': {'/r/lib/src'},
+        'lib/src': {'/r/lib/src'},
+        'lib/src/': {'/r/lib/src/a.dart'},
+      };
+      for (final step in steps) {
+        expect(paths(typed, step), expected[step], reason: step);
+        for (final caseSensitive in [false, true]) {
+          final rows = typed.flatten(
+            filter: TreeQuery.parse(step, caseSensitive: caseSensitive),
+          );
+          expect(rows, isNotEmpty, reason: step);
+          expect(
+            rows.map((row) => row.node.path.toString()),
+            containsAll(expected[step]!),
+            reason: step,
+          );
+        }
+      }
     });
 
     test('case sensitivity applies to fragments and segment globs', () {
@@ -764,9 +825,10 @@ void _checkRanges(List<Range> ranges, String text) {
 }
 
 /// Spec oracle for a term containing '/': for a plain term, a literal name
-/// match or an occurrence in the path string that ends after the name
-/// starts (checked at every index); for a glob, a regular expression over
-/// the name or over the last k components of the path string.
+/// match or an occurrence in the path string that ends at or after the
+/// start of the name (checked at every index); for a glob, a regular
+/// expression over the name or over the last k components of the path
+/// string.
 bool _oracle(
   TreeNode<Object?> node,
   String term, {
@@ -792,7 +854,7 @@ bool _oracle(
   if (name.contains(t)) return true;
   final nameStart = node.path.segments.isEmpty ? 0 : path.length - name.length;
   for (var i = 0; i + t.length <= path.length; i++) {
-    if (path.startsWith(t, i) && i + t.length > nameStart) return true;
+    if (path.startsWith(t, i) && i + t.length >= nameStart) return true;
   }
   return false;
 }
