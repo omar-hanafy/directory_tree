@@ -1,0 +1,19 @@
+name: Publish to pub.dev
+
+# Tag pushes only: pub.dev trusted publishing (OIDC) accepts tags matching
+# directory_tree-v{{version}}. Never add workflow_dispatch or branch triggers.
+on:
+  push:
+    tags:
+      - 'directory_tree-v*'
+
+permissions: {}
+
+jobs:
+  publish:
+    permissions:
+      contents: read # checks out the tagged commit.
+      id-token: write # mints the OIDC token pub.dev trusted publishing verifies.
+    # dart.dev's canonical trusted-publishing workflow, tracked at @v1 as the
+    # automated publishing docs require.
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1 # zizmor: ignore[unpinned-uses]

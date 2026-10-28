@@ -29,3 +29,7 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 /build/
 /coverage/
+
+# Benchmark build outputs (dart compile exe writes *.exe on every OS).
+/benchmark/**/build/
+/benchmark/**/*.exe

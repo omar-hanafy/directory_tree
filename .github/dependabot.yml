@@ -1,0 +1,15 @@
+# Keeps the commit-pinned GitHub Actions in .github/workflows current.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Waits a week before proposing a new action release, so a compromised
+    # or broken release has time to be pulled before it reaches CI.
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
