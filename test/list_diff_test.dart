@@ -71,6 +71,46 @@ List<int> _edit(Random random, List<int> before, int nextKey, int edits) {
   return result;
 }
 
+/// Whether assertions run on this platform and mode; duplicates that the
+/// common prefix or suffix keeps in place are only detected then.
+bool get _assertsEnabled {
+  var enabled = false;
+  assert(enabled = true);
+  return enabled;
+}
+
+/// An item with a key and a version, compared by identity, so tests control
+/// which items are the identical object in both lists.
+final class _Item {
+  _Item(this.key, [this.version = 0]);
+
+  final String key;
+  final int version;
+
+  @override
+  String toString() => '$key@$version';
+}
+
+/// Diffs [before] and [after] by key with `equals` comparing versions, and
+/// checks the result against the apply contract.
+ListDiff _diffItems(List<_Item> before, List<_Item> after) {
+  final diff = ListDiff.compute(
+    before,
+    after,
+    keyOf: (item) => item.key,
+    equals: (a, b) => a.version == b.version,
+  );
+  _expectWellFormed(diff, before.length, after.length);
+  expect(_apply(before, after, diff, (item) => item.key), [
+    for (final item in after) item.key,
+  ], reason: 'apply contract for $before -> $after: $diff');
+  return diff;
+}
+
+List<_Item> _items(String keys) => [
+  for (final key in keys.split('')) _Item(key),
+];
+
 void _expectWellFormed(ListDiff diff, int beforeLength, int afterLength) {
   final removed = diff.removedIndices;
   for (var i = 1; i < removed.length; i++) {
@@ -245,11 +285,111 @@ void main() {
       );
     });
 
-    test('duplicates throw on the equal-keys fast path too', () {
-      final list = ['x', 'x'];
-      expect(() => _diff(list, list), throwsArgumentError);
-      expect(() => _diff(['x', 'x'], ['x', 'x']), throwsArgumentError);
+    test(
+      'duplicates in identical key sequences throw only with assertions',
+      () {
+        // Equal key sequences are one long common prefix, which is kept by
+        // position without hashing.
+        final list = ['x', 'x'];
+        if (_assertsEnabled) {
+          expect(() => _diff(list, list), throwsArgumentError);
+          expect(() => _diff(['x', 'x'], ['x', 'x']), throwsArgumentError);
+        } else {
+          expect(_diff(list, list).isEmpty, isTrue);
+          expect(_diff(['x', 'x'], ['x', 'x']).isEmpty, isTrue);
+        }
+      },
+    );
+
+    test('a duplicate in the middle of before is found without assertions', () {
+      // 'a' also occurs in the common prefix; the middle check reports the
+      // two middle occurrences, which proves it ran before the debug-only
+      // check of the whole list (that one would report indices 0 and 2).
+      expect(
+        () => _diff(const ['a', 'b', 'a', 'a'], const ['a', 'x']),
+        throwsA(
+          isA<ArgumentError>()
+              .having((e) => e.name, 'name', 'before')
+              .having((e) => '${e.message}', 'message', contains('2 and 3')),
+        ),
+      );
     });
+
+    test('a duplicate in the middle of after is found without assertions', () {
+      expect(
+        () => _diff(const ['a', 'b', 'z'], const ['a', 'a', 'y', 'y', 'z']),
+        throwsA(
+          isA<ArgumentError>()
+              .having((e) => e.name, 'name', 'after')
+              .having((e) => '${e.message}', 'message', contains('2 and 3')),
+        ),
+      );
+    });
+
+    test('a duplicate among removed middle items is found', () {
+      expect(
+        () => _diff(const ['a', 'x', 'y', 'x', 'b'], const ['a', 'b']),
+        throwsA(
+          isA<ArgumentError>()
+              .having((e) => e.name, 'name', 'before')
+              .having((e) => '${e.message}', 'message', contains('1 and 3')),
+        ),
+      );
+    });
+
+    test('a duplicate among inserted middle items is found', () {
+      expect(
+        () => _diff(const ['a', 'b'], const ['a', 'x', 'y', 'x', 'b']),
+        throwsA(
+          isA<ArgumentError>()
+              .having((e) => e.name, 'name', 'after')
+              .having((e) => '${e.message}', 'message', contains('1 and 3')),
+        ),
+      );
+    });
+
+    test('a duplicate among matched middle items is found', () {
+      // Both 'k's of before map to the single 'k' in the middle of after.
+      expect(
+        () => _diff(
+          const ['a', 'k', 'b', 'k', 'c'],
+          const ['a', 'b', 'k', 'x', 'c'],
+        ),
+        throwsA(
+          isA<ArgumentError>()
+              .having((e) => e.name, 'name', 'before')
+              .having((e) => '${e.message}', 'message', contains('1 and 3')),
+        ),
+      );
+    });
+
+    test(
+      'duplicates kept by the prefix or suffix throw only with assertions',
+      () {
+        final cases = <(List<String>, List<String>, String)>[
+          // Both copies in the common prefix.
+          (const ['x', 'x', 'y'], const ['x', 'x', 'z'], 'before'),
+          // Both copies in the common suffix.
+          (const ['y', 'x', 'x'], const ['z', 'x', 'x'], 'before'),
+          // One copy in the prefix, one in the middle of before.
+          (const ['a', 'b', 'a'], const ['a', 'c'], 'before'),
+          // One copy in the middle of after, one in the suffix.
+          (const ['a', 'z'], const ['b', 'z', 'z'], 'after'),
+        ];
+        for (final (before, after, list) in cases) {
+          if (_assertsEnabled) {
+            expect(
+              () => _diff(before, after),
+              throwsA(isA<ArgumentError>().having((e) => e.name, 'name', list)),
+              reason: '$before -> $after',
+            );
+          } else {
+            // Unspecified, but it must not throw.
+            _diff(before, after);
+          }
+        }
+      },
+    );
 
     test('equal items with distinct keys are fine', () {
       final before = [(id: 1, v: 'same'), (id: 2, v: 'same')];
@@ -257,6 +397,188 @@ void main() {
       final diff = ListDiff.compute(before, after, keyOf: (item) => item.id);
       expect(diff.removedIndices.length, 1);
       expect(diff.insertedIndices.length, 1);
+    });
+  });
+
+  group('ListDiff.compute common prefix and suffix', () {
+    test('a prefix only: items appended or dropped at the end', () {
+      var diff = _diffItems(_items('abc'), _items('abcde'));
+      expect(diff.removedIndices, isEmpty);
+      expect(diff.insertedIndices, [3, 4]);
+
+      diff = _diffItems(_items('abcd'), _items('ab'));
+      expect(diff.removedIndices, [3, 2]);
+      expect(diff.insertedIndices, isEmpty);
+    });
+
+    test('a suffix only: items prepended or dropped at the start', () {
+      var diff = _diffItems(_items('cd'), _items('abcd'));
+      expect(diff.removedIndices, isEmpty);
+      expect(diff.insertedIndices, [0, 1]);
+
+      diff = _diffItems(_items('abcd'), _items('cd'));
+      expect(diff.removedIndices, [1, 0]);
+      expect(diff.insertedIndices, isEmpty);
+    });
+
+    test('a prefix and a suffix around an inserted or removed block', () {
+      var diff = _diffItems(_items('abef'), _items('abcdef'));
+      expect(diff.removedIndices, isEmpty);
+      expect(diff.insertedIndices, [2, 3]);
+
+      diff = _diffItems(_items('abcdef'), _items('abef'));
+      expect(diff.removedIndices, [3, 2]);
+      expect(diff.insertedIndices, isEmpty);
+    });
+
+    test('a prefix and a suffix around a block that is replaced', () {
+      final diff = _diffItems(_items('abxyef'), _items('abuvwef'));
+      expect(diff.removedIndices, [3, 2]);
+      expect(diff.insertedIndices, [2, 3, 4]);
+    });
+
+    test('a prefix and a suffix around a move in the middle', () {
+      final diff = _diffItems(_items('abcdef'), _items('abdcef'));
+      expect(diff.removedIndices, [2]);
+      expect(diff.insertedIndices, [3]);
+      expect(diff.changedIndices, isEmpty);
+    });
+
+    test('an empty middle: equal key sequences only report changes', () {
+      final before = [_Item('a'), _Item('b'), _Item('c'), _Item('d')];
+      final after = [_Item('a', 1), _Item('b'), _Item('c'), _Item('d', 1)];
+      final diff = _diffItems(before, after);
+      expect(diff.removedIndices, isEmpty);
+      expect(diff.insertedIndices, isEmpty);
+      expect(diff.changedIndices, [0, 3]);
+    });
+
+    test('all-equal lists of identical or equal items give empty diffs', () {
+      final items = _items('abcdef');
+      expect(_diffItems(items, items).isEmpty, isTrue);
+      expect(_diffItems(items, List.of(items)).isEmpty, isTrue);
+      expect(_diffItems(items, _items('abcdef')).isEmpty, isTrue);
+    });
+
+    test('one list being a prefix or suffix of the other', () {
+      expect(_diffItems(_items('a'), _items('abc')).insertedIndices, [1, 2]);
+      expect(_diffItems(_items('abc'), _items('a')).removedIndices, [2, 1]);
+      expect(_diffItems(_items('c'), _items('abc')).insertedIndices, [0, 1]);
+      expect(_diffItems(_items('abc'), _items('c')).removedIndices, [1, 0]);
+      expect(_diffItems(<_Item>[], _items('ab')).insertedIndices, [0, 1]);
+      expect(_diffItems(_items('ab'), <_Item>[]).removedIndices, [1, 0]);
+    });
+
+    test('single-item changes at every position', () {
+      const keys = 'abcde';
+      for (var i = 0; i <= keys.length; i++) {
+        final inserted = '${keys.substring(0, i)}X${keys.substring(i)}';
+        var diff = _diffItems(_items(keys), _items(inserted));
+        expect(diff.insertedIndices, [i], reason: 'insert at $i');
+        expect(diff.removedIndices, isEmpty);
+      }
+      for (var i = 0; i < keys.length; i++) {
+        final removed = keys.substring(0, i) + keys.substring(i + 1);
+        var diff = _diffItems(_items(keys), _items(removed));
+        expect(diff.removedIndices, [i], reason: 'remove at $i');
+        expect(diff.insertedIndices, isEmpty);
+
+        final replaced = '${keys.substring(0, i)}X${keys.substring(i + 1)}';
+        diff = _diffItems(_items(keys), _items(replaced));
+        expect(diff.removedIndices, [i], reason: 'replace at $i');
+        expect(diff.insertedIndices, [i], reason: 'replace at $i');
+
+        final before = _items(keys);
+        final after = [
+          for (var k = 0; k < before.length; k++)
+            k == i ? _Item(before[k].key, 1) : before[k],
+        ];
+        diff = _diffItems(before, after);
+        expect(diff.removedIndices, isEmpty);
+        expect(diff.insertedIndices, isEmpty);
+        expect(diff.changedIndices, [i], reason: 'change at $i');
+      }
+    });
+
+    test('changes and equals calls in the prefix, middle, and suffix', () {
+      final a = _Item('a');
+      final c = _Item('c');
+      final before = [a, _Item('b'), _Item('x'), c, _Item('d')];
+      final after = [a, _Item('b', 1), _Item('y'), c, _Item('d', 1)];
+      final calls = <String>[];
+      final diff = ListDiff.compute(
+        before,
+        after,
+        keyOf: (item) => item.key,
+        equals: (x, y) {
+          calls.add('${x.key}=${y.key}');
+          return x.version == y.version;
+        },
+      );
+      expect(diff.removedIndices, [2]);
+      expect(diff.insertedIndices, [2]);
+      expect(diff.changedIndices, [1, 4]);
+      expect(calls, ['a=a', 'b=b', 'c=c', 'd=d']);
+    });
+  });
+
+  group('ListDiff.compute keyOf calls', () {
+    test(
+      'keys of identical items at prefix and suffix positions are skipped',
+      () {
+        final shared = _items('abcdef');
+        final before = [...shared.take(3), _Item('x'), ...shared.skip(3)];
+        final after = [
+          ...shared.take(3),
+          _Item('y'),
+          _Item('z'),
+          ...shared.skip(3),
+        ];
+        final calls = <_Item, int>{};
+        final diff = ListDiff.compute(
+          before,
+          after,
+          keyOf: (item) {
+            calls[item] = (calls[item] ?? 0) + 1;
+            return item.key;
+          },
+        );
+        expect(diff.removedIndices, [3]);
+        expect(diff.insertedIndices, [3, 4]);
+        // The uniqueness check of debug builds computes every key once more,
+        // and a shared item is in both lists.
+        final extra = _assertsEnabled ? 1 : 0;
+        for (final item in shared) {
+          expect(calls[item] ?? 0, 2 * extra, reason: '$item');
+        }
+        for (final item in [before[3], after[3], after[4]]) {
+          expect(calls[item], 1 + extra, reason: '$item');
+        }
+      },
+    );
+
+    test('keyOf runs at most once per item outside the debug check', () {
+      final random = Random(99);
+      final extra = _assertsEnabled ? 1 : 0;
+      for (var round = 0; round < 500; round++) {
+        final keys = _randomKeys(random, random.nextInt(20), 30);
+        final afterKeys = _edit(random, keys, 30, random.nextInt(5));
+        // Distinct objects, so every call is attributed to one list.
+        final before = [for (final key in keys) _Item('$key')];
+        final after = [for (final key in afterKeys) _Item('$key')];
+        final calls = <_Item, int>{};
+        ListDiff.compute(
+          before,
+          after,
+          keyOf: (item) {
+            calls[item] = (calls[item] ?? 0) + 1;
+            return item.key;
+          },
+        );
+        for (final count in calls.values) {
+          expect(count, lessThanOrEqualTo(1 + extra), reason: '$keys');
+        }
+      }
     });
   });
 
@@ -319,6 +641,95 @@ void main() {
         _expectWellFormed(diff, before.length, after.length);
         expect(_apply(before, after, diff, (int key) => key), after);
       }
+    });
+
+    test(
+      'apply contract and minimality around shared prefixes and suffixes',
+      () {
+        final random = Random(4242);
+        const pool = 60;
+        for (var round = 0; round < 2000; round++) {
+          final beforeKeys = _randomKeys(random, random.nextInt(30), pool);
+          final prefixLength = random.nextInt(beforeKeys.length + 1);
+          final suffixLength = random.nextInt(
+            beforeKeys.length - prefixLength + 1,
+          );
+          final suffixStart = beforeKeys.length - suffixLength;
+          // Fresh keys from _edit start at [pool], so they never collide.
+          final middle = _edit(
+            random,
+            beforeKeys.sublist(prefixLength, suffixStart),
+            pool,
+            random.nextInt(6),
+          );
+          final afterKeys = [
+            ...beforeKeys.sublist(0, prefixLength),
+            ...middle,
+            ...beforeKeys.sublist(suffixStart),
+          ];
+          final before = [for (final key in beforeKeys) _Item('$key')];
+          final beforeIndexOf = {
+            for (var i = 0; i < beforeKeys.length; i++) beforeKeys[i]: i,
+          };
+          // A key that is in both lists carries over as the identical item,
+          // an equal copy, or a changed copy.
+          final after = [
+            for (final key in afterKeys)
+              switch (beforeIndexOf[key]) {
+                null => _Item('$key'),
+                final index => switch (random.nextInt(3)) {
+                  0 => before[index],
+                  1 => _Item('$key'),
+                  _ => _Item('$key', 1),
+                },
+              },
+          ];
+          final diff = _diffItems(before, after);
+          final reason = 'before: $before, after: $after, diff: $diff';
+          expect(
+            before.length - diff.removedIndices.length,
+            _oracleKeptCount(beforeKeys, afterKeys),
+            reason: reason,
+          );
+          final inserted = diff.insertedIndices.toSet();
+          expect(diff.changedIndices, [
+            for (var j = 0; j < after.length; j++)
+              if (!inserted.contains(j) && after[j].version != 0) j,
+          ], reason: reason);
+        }
+      },
+    );
+
+    test('collapsing or expanding one directory of tree rows is one block', () {
+      final tree = DirectoryTree.fromPaths([
+        for (var a = 0; a < 5; a++)
+          for (var b = 0; b < 4; b++)
+            for (var c = 0; c < 3; c++) '/r/d$a/e$b/f$c.txt',
+      ]);
+      final rows = tree.flatten();
+      final target = tree.idOf('/r/d2/e1')!;
+      final index = rows.indexOfNode(target);
+      final collapsed = rows.collapseNode(target);
+      final hidden = rows.length - collapsed.length;
+      expect(hidden, 3);
+
+      final collapse = ListDiff.compute(
+        rows,
+        collapsed,
+        keyOf: (row) => row.id,
+      );
+      expect(collapse.removedIndices, [
+        for (var i = index + hidden; i > index; i--) i,
+      ]);
+      expect(collapse.insertedIndices, isEmpty);
+      expect(collapse.changedIndices, [index], reason: 'now collapsed');
+
+      final expand = ListDiff.compute(collapsed, rows, keyOf: (row) => row.id);
+      expect(expand.removedIndices, isEmpty);
+      expect(expand.insertedIndices, [
+        for (var i = index + 1; i <= index + hidden; i++) i,
+      ]);
+      expect(expand.changedIndices, [index], reason: 'now expanded');
     });
 
     test('a 50k reversal and a 50k identical-keys copy', () {

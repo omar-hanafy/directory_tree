@@ -46,9 +46,10 @@ final class ListDiff {
   /// Computes the diff from [before] to [after], matching items by the key
   /// that [keyOf] returns.
   ///
-  /// Keys are compared with `==` and `hashCode`, so they must be valid map
-  /// keys (ids, strings, records of those). An item whose key is in both
-  /// lists is kept when it belongs to the longest subsequence of keys that
+  /// Keys are compared with `==`, and keys outside the common prefix and
+  /// suffix (see below) are also hashed, so they must be valid map keys
+  /// (ids, strings, records of those). An item whose key is in both lists
+  /// is kept when it belongs to the longest subsequence of keys that
   /// appears in the same relative order in both lists; otherwise it is
   /// removed and re-inserted. Since only the maximal such subsequence is
   /// kept, the number of removals (and of insertions) is the minimum
@@ -57,8 +58,9 @@ final class ListDiff {
   ///
   /// [equals] decides whether a kept item changed: kept items for which
   /// `equals(beforeItem, afterItem)` is false are listed in
-  /// [changedIndices]. It defaults to `==`. It is called once per kept item
-  /// and never for removed or inserted items.
+  /// [changedIndices]. It defaults to `==`. It is called once per kept item,
+  /// in ascending order of the item's index in [after], and never for
+  /// removed or inserted items.
   ///
   /// Applying the result: on a copy of [before], call `removeAt` for each
   /// index of [removedIndices] in order, then insert `after[i]` at index `i`
@@ -68,14 +70,39 @@ final class ListDiff {
   /// Empty lists are valid: from an empty list everything is inserted; to
   /// an empty list everything is removed.
   ///
-  /// Throws an [ArgumentError] when a key occurs more than once within
-  /// [before] or within [after]; the message names the key, the list, and
-  /// both indices.
+  /// ## How the lists are matched
   ///
-  /// Runs in O(n + m) when the two key sequences are equal (including when
-  /// [before] and [after] are the same list), and in O((n + m) log(n + m))
-  /// otherwise, plus one [keyOf] call per item; n and m are the list
-  /// lengths.
+  /// The common prefix (the longest run of leading positions whose keys are
+  /// equal in both lists) and then the common suffix (the longest run of
+  /// trailing positions whose keys are equal, not overlapping the prefix)
+  /// are kept in place by comparing keys pairwise, without hashing. Only
+  /// the items between them, the middle region of each list, are hashed
+  /// and matched with a longest increasing subsequence. A typical view
+  /// update, such as the rows after expanding or collapsing one directory,
+  /// changes one contiguous block, so only that block is hashed.
+  ///
+  /// ## Duplicate keys
+  ///
+  /// Keys must be unique within [before] and within [after]. Throws an
+  /// [ArgumentError] when two items of the middle region of [before], or
+  /// two items of the middle region of [after], have equal keys; the
+  /// message names the key, the list, and both indices. Equal keys
+  /// elsewhere (for example both in the common prefix, or one in the prefix
+  /// and one in the middle region) are detected only when assertions are
+  /// enabled (debug builds and tests), where they throw the same
+  /// [ArgumentError] once the middle region has been checked; with
+  /// assertions disabled such input yields an unspecified diff.
+  ///
+  /// ## Cost
+  ///
+  /// With n and m the list lengths, p and s the lengths of the common
+  /// prefix and suffix, and k the number of middle items in both lists
+  /// together (`n + m - 2 * (p + s)`), this runs in O(n + m) key
+  /// comparisons and [equals] calls plus O(k log k) for the middle region.
+  /// [keyOf] is called at most once per item, and not at all for an item
+  /// that is the identical object at the same prefix or suffix position of
+  /// both lists. When assertions are enabled, the uniqueness check calls
+  /// [keyOf] once more per item and hashes every key.
   static ListDiff compute<E, K>(
     List<E> before,
     List<E> after, {
@@ -85,64 +112,165 @@ final class ListDiff {
     final isEqual = equals ?? _defaultEquals;
     final n = before.length;
     final m = after.length;
+    final shortest = n < m ? n : m;
 
-    final beforeKeys = List<K>.generate(n, (i) => keyOf(before[i]));
-    _indexKeys(beforeKeys, 'before');
-    final List<K> afterKeys;
+    // Common prefix. An item that is the identical object at the same
+    // position of both lists has the same key, so its key is not computed:
+    // rows rebuilt around one changed block share most row objects with
+    // the old rows. The keys of the first mismatching pair are kept, since
+    // those items belong to the middle region and keyOf runs once per item.
+    late K prefixBeforeKey;
+    late K prefixAfterKey;
+    var prefixMismatch = false;
+    var prefix = 0;
     if (identical(before, after)) {
-      afterKeys = beforeKeys;
+      prefix = n;
     } else {
-      afterKeys = List<K>.generate(m, (i) => keyOf(after[i]));
+      while (prefix < shortest) {
+        final beforeItem = before[prefix];
+        final afterItem = after[prefix];
+        if (!identical(beforeItem, afterItem)) {
+          final beforeKey = keyOf(beforeItem);
+          final afterKey = keyOf(afterItem);
+          if (beforeKey != afterKey) {
+            prefixBeforeKey = beforeKey;
+            prefixAfterKey = afterKey;
+            prefixMismatch = true;
+            break;
+          }
+        }
+        prefix++;
+      }
     }
 
-    // Fast path: same key sequence. Everything is kept in place, so only
-    // changes are possible. Duplicates in [after] are already ruled out by
-    // the check on [before].
-    if (n == m && _sameKeys(beforeKeys, afterKeys)) {
-      final changed = <int>[
-        for (var i = 0; i < n; i++)
-          if (!isEqual(before[i], after[i])) i,
-      ];
-      return ListDiff._(const <int>[], const <int>[], changed);
+    // Common suffix, never overlapping the prefix. It can only run when the
+    // prefix scan stopped at a mismatch (otherwise the shorter list is used
+    // up), so a position the prefix stopped at reuses that key. When the
+    // suffix stops at a mismatch, the keys of that pair, the last middle
+    // items, are kept too.
+    late K suffixBeforeKey;
+    late K suffixAfterKey;
+    var suffixMismatch = false;
+    var suffix = 0;
+    final maxSuffix = shortest - prefix;
+    while (suffix < maxSuffix) {
+      final beforeIndex = n - 1 - suffix;
+      final afterIndex = m - 1 - suffix;
+      final beforeItem = before[beforeIndex];
+      final afterItem = after[afterIndex];
+      if (!identical(beforeItem, afterItem)) {
+        final beforeKey = beforeIndex == prefix
+            ? prefixBeforeKey
+            : keyOf(beforeItem);
+        final afterKey = afterIndex == prefix
+            ? prefixAfterKey
+            : keyOf(afterItem);
+        if (beforeKey != afterKey) {
+          suffixBeforeKey = beforeKey;
+          suffixAfterKey = afterKey;
+          suffixMismatch = true;
+          break;
+        }
+      }
+      suffix++;
     }
 
-    final afterIndexByKey = _indexKeys(afterKeys, 'after');
+    // The middle regions: before[prefix, beforeEnd) and after[prefix,
+    // afterEnd). Keys the scans already computed are reused (the loops
+    // below spell this out instead of using closures, which would move the
+    // loop counters into a heap context).
+    final beforeEnd = n - suffix;
+    final afterEnd = m - suffix;
 
-    // For each before item whose key is also in after, the after index it
-    // maps to, in before order. Kept items are a longest increasing
-    // subsequence of these after indices.
+    // Each middle key of [after], mapped to its index. A middle key of
+    // [before] that [after] lacks is stored as -1 - (its before index), so
+    // a second occurrence in [before] is found by the same lookup.
+    final indexByKey = <K, int>{};
+    for (var j = prefix; j < afterEnd; j++) {
+      final K key;
+      if (prefixMismatch && j == prefix) {
+        key = prefixAfterKey;
+      } else if (suffixMismatch && j == afterEnd - 1) {
+        key = suffixAfterKey;
+      } else {
+        key = keyOf(after[j]);
+      }
+      final previous = indexByKey[key];
+      if (previous != null) throw _duplicateKey(key, 'after', previous, j);
+      indexByKey[key] = j;
+    }
+
+    // For each middle item of [before] whose key is in the middle of
+    // [after], the after index it maps to, in before order. Kept middle
+    // items are a longest increasing subsequence of these after indices.
+    // claimedBy[j - prefix] is the before index mapped to after index j.
+    final afterMiddle = afterEnd - prefix;
+    final claimedBy = List<int>.filled(afterMiddle, -1);
     final sequence = <int>[];
     final sequenceBeforeIndex = <int>[];
-    for (var i = 0; i < n; i++) {
-      final afterIndex = afterIndexByKey[beforeKeys[i]];
-      if (afterIndex != null) {
-        sequence.add(afterIndex);
+    for (var i = prefix; i < beforeEnd; i++) {
+      final K key;
+      if (prefixMismatch && i == prefix) {
+        key = prefixBeforeKey;
+      } else if (suffixMismatch && i == beforeEnd - 1) {
+        key = suffixBeforeKey;
+      } else {
+        key = keyOf(before[i]);
+      }
+      final mapped = indexByKey[key];
+      if (mapped == null) {
+        indexByKey[key] = -1 - i;
+      } else if (mapped < 0) {
+        throw _duplicateKey(key, 'before', -1 - mapped, i);
+      } else {
+        final claimed = claimedBy[mapped - prefix];
+        if (claimed >= 0) throw _duplicateKey(key, 'before', claimed, i);
+        claimedBy[mapped - prefix] = i;
+        sequence.add(mapped);
         sequenceBeforeIndex.add(i);
       }
     }
-    final kept = _longestIncreasingSubsequence(sequence);
 
-    final keptBefore = List<bool>.filled(n, false);
-    final keptAfter = List<bool>.filled(m, false);
-    final changed = <int>[];
+    // The middle regions are free of duplicates; in debug builds, also
+    // check the items that the prefix and suffix scans kept by position.
+    assert(
+      _checkUniqueKeys(before, keyOf, 'before') &&
+          (identical(before, after) || _checkUniqueKeys(after, keyOf, 'after')),
+      'Keys must be unique within each list.',
+    );
+
+    final kept = _longestIncreasingSubsequence(sequence);
+    final keptBefore = List<bool>.filled(beforeEnd - prefix, false);
+    final keptAfter = List<bool>.filled(afterMiddle, false);
+
+    // [equals] runs once per kept item in ascending after order: prefix,
+    // kept middle items ([kept] is ascending in after index), then suffix.
+    final changed = <int>[
+      for (var i = 0; i < prefix; i++)
+        if (!isEqual(before[i], after[i])) i,
+    ];
     for (final position in kept) {
       final beforeIndex = sequenceBeforeIndex[position];
       final afterIndex = sequence[position];
-      keptBefore[beforeIndex] = true;
-      keptAfter[afterIndex] = true;
-      // [kept] is ascending in after index, so [changed] is too.
+      keptBefore[beforeIndex - prefix] = true;
+      keptAfter[afterIndex - prefix] = true;
       if (!isEqual(before[beforeIndex], after[afterIndex])) {
         changed.add(afterIndex);
       }
     }
+    for (var t = 0; t < suffix; t++) {
+      if (!isEqual(before[beforeEnd + t], after[afterEnd + t])) {
+        changed.add(afterEnd + t);
+      }
+    }
 
     final removed = <int>[
-      for (var i = n - 1; i >= 0; i--)
-        if (!keptBefore[i]) i,
+      for (var i = beforeEnd - 1; i >= prefix; i--)
+        if (!keptBefore[i - prefix]) i,
     ];
     final inserted = <int>[
-      for (var i = 0; i < m; i++)
-        if (!keptAfter[i]) i,
+      for (var j = prefix; j < afterEnd; j++)
+        if (!keptAfter[j - prefix]) j,
     ];
     return ListDiff._(removed, inserted, changed);
   }
@@ -211,30 +339,36 @@ bool _listEquals(List<int> a, List<int> b) {
   return true;
 }
 
-bool _sameKeys<K>(List<K> a, List<K> b) {
-  if (identical(a, b)) return true;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) return false;
-  }
-  return true;
-}
+/// The error for [key] occurring at [previous] and [index] of [listName].
+ArgumentError _duplicateKey(
+  Object? key,
+  String listName,
+  int previous,
+  int index,
+) => ArgumentError(
+  'Duplicate key $key in $listName at indices $previous and $index; '
+  'keys must be unique within each list.',
+  listName,
+);
 
-/// Maps each key to its index, throwing on the first duplicate.
-Map<K, int> _indexKeys<K>(List<K> keys, String listName) {
+/// Returns true when the keys of [items] are unique; otherwise throws the
+/// [ArgumentError] of [_duplicateKey] for the first repeated key.
+///
+/// Only called from an assert: release builds check just the middle
+/// regions, which keeps a diff of one changed block from hashing every key.
+bool _checkUniqueKeys<E, K>(
+  List<E> items,
+  K Function(E item) keyOf,
+  String listName,
+) {
   final indexByKey = <K, int>{};
-  for (var i = 0; i < keys.length; i++) {
-    final key = keys[i];
+  for (var i = 0; i < items.length; i++) {
+    final key = keyOf(items[i]);
     final previous = indexByKey[key];
-    if (previous != null) {
-      throw ArgumentError(
-        'Duplicate key $key in $listName at indices $previous and $i; '
-        'keys must be unique within each list.',
-        listName,
-      );
-    }
+    if (previous != null) throw _duplicateKey(key, listName, previous, i);
     indexByKey[key] = i;
   }
-  return indexByKey;
+  return true;
 }
 
 /// Positions in [sequence] of one longest strictly increasing subsequence,
