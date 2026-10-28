@@ -133,7 +133,7 @@ String renderTree<T>(
   // materializing TreeRow.guides for every row.
   final prefixes = <String>['', ''];
   for (var index = 0; index < rows.length; index++) {
-    final row = rows[index];
+    final row = rows[index]!;
     final depth = row.depth;
     if (index > 0) buffer.write('\n');
     if (depth > 0) {
@@ -143,7 +143,7 @@ String renderTree<T>(
     }
     buffer.write(label == null ? _defaultLabel(row) : label(row));
     final next = index + 1;
-    if (depth > 0 && next < rows.length && rows[next].depth == depth + 1) {
+    if (depth > 0 && next < rows.length && rows[next]!.depth == depth + 1) {
       final childPrefix =
           prefixes[depth] + (row.isLast ? style.gap : style.pipe);
       if (depth + 1 < prefixes.length) {

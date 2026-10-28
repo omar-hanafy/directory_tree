@@ -441,6 +441,129 @@ void main() {
     });
   });
 
+  group('row list sizing', () {
+    // flatten allocates its row list once at an upper bound when one is
+    // cheap (an expanded state with few exceptions, or a filter), trims it
+    // afterwards, and otherwise grows it. Every path must give the oracle's
+    // rows.
+    final wide = DirectoryTree.fromPaths([
+      for (var i = 0; i < 80; i++) '/r/d$i/f$i.txt',
+      '/r/x/y/z/w.txt',
+      '/s/only/one.txt',
+    ]);
+    final directories = [for (final node in wide.directories) node.id];
+
+    test('the tree has more directories than the exception limit', () {
+      expect(directories.length, greaterThan(70));
+    });
+
+    final states = <String, ExpansionState>{
+      'everything expanded': const ExpansionState.expanded(),
+      'one small folder collapsed': ExpansionState.withCollapsed([
+        wide.idOf('/r/d3')!,
+      ]),
+      'the largest folder collapsed': ExpansionState.withCollapsed([
+        wide.idOf('/r')!,
+      ]),
+      'most of the tree collapsed': ExpansionState.withCollapsed([
+        for (var i = 0; i < 60; i++) wide.idOf('/r/d$i')!,
+        wide.idOf('/s')!,
+      ]),
+      'more than 64 exceptions': ExpansionState.withCollapsed(
+        directories.skip(2).take(70),
+      ),
+      'unknown and file exceptions': ExpansionState.withCollapsed([
+        const NodeId('/nowhere'),
+        wide.idOf('/r/d1/f1.txt')!,
+      ]),
+      'collapsed by default': ExpansionState.withExpanded([
+        wide.idOf('/r')!,
+        wide.idOf('/r/x')!,
+      ]),
+    };
+    states.forEach((name, expansion) {
+      test(name, () {
+        for (final showRoots in const [true, false]) {
+          for (final compactFolders in const [false, true]) {
+            for (final filter in [
+              null,
+              nameFilter((name) => name.startsWith('f1')),
+            ]) {
+              final rows = wide.flatten(
+                expansion: expansion,
+                filter: filter,
+                expandMatches: false,
+                compactFolders: compactFolders,
+                showRoots: showRoots,
+              );
+              expectRows(
+                rows,
+                oracleFlatten(
+                  wide,
+                  expansion: expansion,
+                  filter: filter,
+                  expandMatches: false,
+                  compactFolders: compactFolders,
+                  showRoots: showRoots,
+                ),
+                '$name, showRoots $showRoots, compact $compactFolders, '
+                'filter ${filter != null}',
+              );
+              // Every slot of the list is a row (no unfilled slot remains).
+              expect(rows.every((row) => row.node.id.value.isNotEmpty), true);
+            }
+          }
+        }
+      });
+    });
+  });
+
+  group('derived properties deep in the tree', () {
+    test('hasChildren, isMatch, label, and chain at depth 999', () {
+      final segments = [for (var i = 0; i < 1000; i++) 'd$i'];
+      final deep = DirectoryTree.fromPaths([
+        '/${segments.first}/',
+        '/${segments.join('/')}/leaf.txt',
+        '/${segments.join('/')}/other.md',
+      ]);
+      final rows = deep.flatten(
+        filter: nameFilter((name) => name == 'leaf.txt' || name == 'd998'),
+      );
+      final leaf = rows.rowOf(deep.idOf('/${segments.join('/')}/leaf.txt')!)!;
+      expect(leaf.depth, 1000);
+      expect(leaf.isMatch, isTrue);
+      expect(leaf.hasChildren, isFalse);
+      expect(leaf.label, 'leaf.txt');
+      expect(leaf.chain.single, same(leaf.node));
+      final parent = rows[rows.parentIndexOf(rows.indexOf(leaf))!];
+      expect(parent.label, 'd999');
+      expect(parent.hasChildren, isTrue);
+      expect(parent.isMatch, isFalse);
+      final matchedAncestor = rows.rowOf(
+        deep.idOf('/${segments.take(999).join('/')}')!,
+      )!;
+      expect(matchedAncestor.isMatch, isTrue);
+      // other.md does not match, so leaf.txt is the only visible child.
+      expect(leaf.isLast, isTrue);
+      final compacted = deep.flatten(compactFolders: true);
+      expect(compacted.first.label, segments.join('/'));
+      expect(compacted.first.chain, hasLength(1000));
+      expect(compacted[1].label, 'leaf.txt');
+      expect(compacted[1].hasChildren, isFalse);
+    });
+
+    test('derived lists are equal on every read and unmodifiable', () {
+      final rows = tree.flatten(compactFolders: true);
+      for (final row in rows) {
+        expect(row.guides, row.guides);
+        expect(row.chain, row.chain);
+        expect(row.label, row.label);
+        expect(() => row.chain.add(row.node), throwsUnsupportedError);
+        expect(() => row.guides.add(true), throwsUnsupportedError);
+      }
+    });
+  });
+
   group('hidden roots', () {
     test('multiple roots: their children are one list of depth-0 rows', () {
       final rows = tree.flatten(showRoots: false);
