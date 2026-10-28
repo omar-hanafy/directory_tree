@@ -33,7 +33,8 @@ import 'package:meta/meta.dart';
 /// Paths are exactly what `dart:io` reports: the scanned path as given,
 /// followed by the platform separator and each name (so a relative input
 /// gives relative entries, and a symbolic link keeps its own path, not its
-/// target's). Entries are sorted by [String.compareTo] on [TreeEntry.path]
+/// target's). Only [scanTree] rewrites its input, and only for a relative
+/// path that climbs above its start (see there). Entries are sorted by [String.compareTo] on [TreeEntry.path]
 /// (UTF-16 code units), so the result is the same on every run over an
 /// unchanged directory.
 ///
@@ -248,17 +249,38 @@ final class DirectoryScanner {
   /// entry; no node is inferred.
   ///
   /// Node paths are parsed by [TreeOptions.paths] from the paths `dart:io`
-  /// reports. A relative [path] that climbs above its start, such as
-  /// `../project`, cannot be represented by a relative tree path, so every
-  /// entry would be reported in [DirectoryTree.issues] instead of becoming a
-  /// node; pass `Directory(path).absolute.path` in that case.
+  /// reports. A relative [path] that the policy can represent, such as
+  /// `lib` or `./src`, is scanned as given, so the tree stays relative.
+  /// A relative [path] that climbs above its start, such as `..` or
+  /// `../project`, has no relative tree path, so this method scans
+  /// `Directory(path).absolute.path` instead: the tree is then absolute, its
+  /// `..` segments resolved lexically by path parsing, and each node's
+  /// `data` keeps the unresolved absolute spelling that `dart:io` reports
+  /// (for example `/home/me/work/../project/lib`). [scan] and [scanSync]
+  /// never make this substitution; they return paths exactly as `dart:io`
+  /// reports them for the path given.
   ///
   /// Completes with the same errors as [scan].
   Future<DirectoryTree<FileSystemEntity>> scanTree(
     String path, {
     TreeOptions options = const TreeOptions(),
-  }) async =>
-      DirectoryTree<FileSystemEntity>.build(await scan(path), options: options);
+  }) async => DirectoryTree<FileSystemEntity>.build(
+    await scan(_treePath(path, options)),
+    options: options,
+  );
+
+  /// The path [scanTree] scans for [path]: [path] itself when
+  /// [TreeOptions.paths] can parse it, and its absolute form when only that
+  /// parses (a relative path escaping its start).
+  ///
+  /// An empty path stays empty so [scan] still reports it as missing rather
+  /// than scanning the current directory, and a path that is invalid in both
+  /// forms (a NUL character) is kept so [scan] reports the caller's spelling.
+  static String _treePath(String path, TreeOptions options) {
+    if (path.isEmpty || options.paths.tryParse(path) != null) return path;
+    final absolute = Directory(path).absolute.path;
+    return options.paths.tryParse(absolute) == null ? path : absolute;
+  }
 
   void _checkMaxDepth() {
     final depth = maxDepth;

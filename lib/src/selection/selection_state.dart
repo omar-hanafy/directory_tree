@@ -177,7 +177,8 @@ final class SelectionState {
   ///
   /// [select] and, in [SelectionMode.multiple], [toggle] move it to the
   /// clicked id; [extendTo], [addAll], [removeAll], [check], and [uncheck]
-  /// keep it; [clear] removes it. The anchor need not be selected.
+  /// keep it; [clear] removes it; [withMode] may move or remove it when
+  /// switching to [SelectionMode.single]. The anchor need not be selected.
   final NodeId? anchor;
 
   /// Whether [id] is selected. O(1).
@@ -310,11 +311,18 @@ final class SelectionState {
 
   /// Switches to [mode].
   ///
-  /// Switching to [SelectionMode.multiple] keeps the selection and anchor.
-  /// Switching to [SelectionMode.single] keeps only the [anchor] when it is
-  /// selected; otherwise it clears the selection and the anchor, even when
-  /// exactly one id is selected. Returns this state when [mode] is the
-  /// current mode. O(length).
+  /// Switching to [SelectionMode.multiple] keeps the selection and anchor
+  /// unchanged.
+  ///
+  /// Switching to [SelectionMode.single] keeps at most one id, chosen in
+  /// this order:
+  /// 1. the [anchor], when it is selected;
+  /// 2. otherwise the only selected id, when exactly one is selected; it
+  ///    also becomes the anchor;
+  /// 3. otherwise nothing: the selection and the anchor are cleared, since
+  ///    no single id stands out among several (or none) selected.
+  ///
+  /// Returns this state when [mode] is the current mode. O(length).
   @useResult
   SelectionState withMode(SelectionMode mode) {
     if (mode == this.mode) return this;
@@ -328,6 +336,10 @@ final class SelectionState {
     final pivot = anchor;
     if (pivot != null && _selected.contains(pivot)) {
       return SelectionState._(mode, <NodeId>{pivot}, pivot);
+    }
+    if (_selected.length == 1) {
+      final only = _selected.single;
+      return SelectionState._(mode, <NodeId>{only}, only);
     }
     return SelectionState.empty(mode: mode);
   }

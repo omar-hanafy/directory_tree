@@ -20,8 +20,21 @@ import 'package:directory_tree/src/tree/tree_options.dart';
 /// with string equality. It deliberately does not implement [String], so
 /// string methods are not available on ids; it implements [Object], so ids
 /// are non-nullable and fit anywhere an [Object] is expected.
-extension type const NodeId(
+extension type const NodeId._(
   /// The policy key this id wraps; store it to persist the id.
   String value
 )
-    implements Object {}
+    implements Object {
+  /// Wraps [value], a policy key, as an id without checking it.
+  ///
+  /// Use it to restore an id persisted with [NodeId.value]; to derive the
+  /// id of a path, use [PathPolicy.idOf] or [DirectoryTree.idOf] instead,
+  /// since only they apply the policy's case folding. The id equals
+  /// another exactly when the strings are equal, and it matches a node
+  /// only when [value] is that node's key in the tree's [PathPolicy].
+  /// Usable in constant expressions.
+  // The representation constructor is private so this documented one is
+  // the public entry point; dartdoc and pana cannot attach docs to a
+  // primary constructor.
+  const NodeId(String value) : this._(value);
+}

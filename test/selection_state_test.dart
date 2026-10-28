@@ -356,15 +356,59 @@ void main() {
       expect(next.anchor, id('/b'));
     });
 
-    test('to single clears when the anchor is not selected', () {
+    test('to single keeps the only selected id and anchors it', () {
+      for (final state in [
+        SelectionState(mode: multiple, selected: ids(['/a'])),
+        SelectionState(mode: multiple, selected: ids(['/a']), anchor: id('/b')),
+      ]) {
+        final next = state.withMode(single);
+        expect(next.mode, single);
+        expect(next.selected, idSet(['/a']));
+        expect(next.anchor, id('/a'));
+      }
+    });
+
+    test('to single clears several ids without a selected anchor', () {
       for (final state in [
         SelectionState(mode: multiple, selected: ids(['/a', '/b'])),
-        SelectionState(mode: multiple, selected: ids(['/a']), anchor: id('/b')),
+        SelectionState(
+          mode: multiple,
+          selected: ids(['/a', '/b']),
+          anchor: id('/c'),
+        ),
       ]) {
         final next = state.withMode(single);
         expect(next.mode, single);
         expect(next.isEmpty, isTrue);
         expect(next.anchor, isNull);
+      }
+    });
+
+    test('to single clears an empty selection and its anchor', () {
+      final state = SelectionState(mode: multiple, anchor: id('/a'));
+      final next = state.withMode(single);
+      expect(next, const SelectionState.empty());
+    });
+
+    test('mode switches survive a JSON round trip', () {
+      final multi = SelectionState(
+        mode: multiple,
+        selected: ids(['/b', '/a']),
+        anchor: id('/c'),
+      );
+      for (final state in [
+        multi,
+        multi.withMode(single),
+        SelectionState(
+          mode: multiple,
+          selected: ids(['/a']),
+          anchor: id('/b'),
+        ).withMode(single),
+        SelectionState(selected: ids(['/a'])).withMode(multiple),
+      ]) {
+        final decoded =
+            jsonDecode(jsonEncode(state.toJson())) as Map<String, Object?>;
+        expect(SelectionState.fromJson(decoded), state);
       }
     });
   });

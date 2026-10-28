@@ -284,6 +284,17 @@ void main() {
       );
     });
 
+    test('an empty path throws PathNotFoundException', () async {
+      // scanTree must not turn '' into the current directory's absolute
+      // path while handling relative paths that escape their start.
+      const scanner = DirectoryScanner();
+      expect(() => scanner.scanSync(''), throwsA(isA<PathNotFoundException>()));
+      await expectLater(
+        scanner.scanTree(''),
+        throwsA(isA<PathNotFoundException>()),
+      );
+    });
+
     test('a file path throws FileSystemException', () async {
       final file = '${base.path}/top.txt';
       final notADirectory = isA<FileSystemException>()
@@ -546,6 +557,41 @@ void main() {
         expect(node!.kind, entry.kind);
         expect(node.data!.path, entry.path);
         expect(dataType(node.data), dataType(entry.data));
+      }
+    });
+
+    test('scans a relative path that climbs above its start', () async {
+      // Reach base from the current directory through more `..` segments
+      // than the current directory has, without changing Directory.current
+      // (it is process-wide). The extra `..` keeps the path escaping even
+      // when the current directory is a root; `..` at a root stays there.
+      final current = TreePath.parse(Directory.current.absolute.path);
+      final target = TreePath.parse(base.absolute.path);
+      if (current.root != target.root) {
+        markTestSkipped('the temp directory is on another drive');
+        return;
+      }
+      final escaping = [
+        for (var i = 0; i <= current.segments.length; i++) '..',
+        ...target.segments,
+      ].join(Platform.pathSeparator);
+      expect(TreePath.tryParse(escaping), isNull);
+      expect(Directory(escaping).existsSync(), isTrue);
+
+      const scanner = DirectoryScanner(includeHidden: true);
+      final tree = await scanner.scanTree(escaping);
+      expect(tree.issues, isEmpty);
+      final root = tree.rootNodes.single;
+      expect(root.path, target);
+      expect(root.data, isA<Directory>());
+      final expected = [
+        for (final entry in scanner.scanSync(base.path))
+          TreePath.parse(entry.path),
+      ];
+      expect(expected, hasLength(12));
+      expect(tree.nodes.map((node) => node.path), unorderedEquals(expected));
+      for (final node in tree.nodes) {
+        expect(TreePath.parse(node.data!.path), node.path);
       }
     });
 
