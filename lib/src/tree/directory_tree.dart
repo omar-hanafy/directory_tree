@@ -360,9 +360,11 @@ final class DirectoryTree<T> {
   /// * [expandMatches] (default true) adds every ancestor of every match to
   ///   [expansion] before flattening, so all matches are visible. The rows'
   ///   [TreeRows.expansion] is that effective state, so the user can still
-  ///   collapse revealed directories. With false, [expansion] is used as
-  ///   given and matches inside collapsed directories stay hidden. Without a
-  ///   filter it has no effect.
+  ///   collapse revealed directories, and [TreeRows.requestedExpansion] is
+  ///   [expansion] without the reveals: persist that one, so restoring the
+  ///   view after the search does not reopen every folder the search
+  ///   opened. With false, [expansion] is used as given and matches inside
+  ///   collapsed directories stay hidden. Without a filter it has no effect.
   /// * [compactFolders] shows a directory whose only child is a directory on
   ///   one row with that child, repeatedly (`lib/src/utils`), as VS Code
   ///   does. Compaction follows the tree structure, not the filter; the row
@@ -407,11 +409,12 @@ final class DirectoryTree<T> {
   /// ```
   ///
   /// An empty tree, or a filter that matches nothing, gives empty rows.
-  /// Without a filter this runs in O(rows + roots): each collapsed
-  /// directory's subtree is skipped in O(1). With a filter it runs in O(n)
-  /// for n nodes and keeps about 9 bytes per node of match results, which
-  /// the returned rows share with every update. Uses no recursion, so depth
-  /// is unlimited.
+  /// Without a filter this runs in O(visible nodes + roots): each collapsed
+  /// directory's subtree is skipped in O(1), and a compacted row costs the
+  /// length of its chain, so without [compactFolders] it is O(rows +
+  /// roots). With a filter it runs in O(n) for n nodes and keeps about 9
+  /// bytes per node of match results, which the returned rows share with
+  /// every update. Uses no recursion, so depth is unlimited.
   @useResult
   TreeRows<T> flatten({
     ExpansionState expansion = const ExpansionState.expanded(),

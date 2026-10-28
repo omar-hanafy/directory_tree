@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:directory_tree/directory_tree.dart';
@@ -643,6 +644,283 @@ void main() {
     });
   });
 
+  group('requested expansion', () {
+    test('equals the effective state when nothing is revealed', () {
+      final plain = tree.flatten();
+      expect(identical(plain.requestedExpansion, plain.expansion), isTrue);
+      final toggled = plain.toggleNode(a).reveal(z).collapseNode(c);
+      expect(identical(toggled.requestedExpansion, toggled.expansion), isTrue);
+      final unrevealed = tree.flatten(
+        expansion: const ExpansionState.collapsed(),
+        filter: textFiles,
+        expandMatches: false,
+      );
+      expect(unrevealed.requestedExpansion, const ExpansionState.collapsed());
+      expect(
+        identical(unrevealed.requestedExpansion, unrevealed.expansion),
+        isTrue,
+      );
+      // The expanded default already shows every match.
+      final searched = tree.flatten(filter: textFiles);
+      expect(identical(searched.requestedExpansion, searched.expansion), true);
+    });
+
+    test('a search reveals folders only in the effective state', () {
+      final rows = tree.flatten(
+        expansion: const ExpansionState.collapsed(),
+        filter: textFiles,
+      );
+      expect(rows.expansion, ExpansionState.withExpanded([r, a, b, c]));
+      expect(rows.requestedExpansion, const ExpansionState.collapsed());
+      // Collapsing a revealed folder: both states end collapsed.
+      final collapsed = rows.collapseNode(b);
+      expect(collapsed.expansion, ExpansionState.withExpanded([r, a, c]));
+      expect(
+        identical(collapsed.requestedExpansion, rows.requestedExpansion),
+        isTrue,
+      );
+      // Expanding a revealed folder: the rows stay, the choice is recorded.
+      final expanded = rows.expandNode(a);
+      expect(identical(expanded, rows), isFalse);
+      expect(identical(expanded.expansion, rows.expansion), isTrue);
+      expect(expanded.requestedExpansion, ExpansionState.withExpanded([a]));
+      for (var i = 0; i < rows.length; i++) {
+        expect(identical(expanded[i], rows[i]), isTrue);
+      }
+      // Expanding it again changes nothing at all.
+      expect(identical(expanded.expandNode(a), expanded), isTrue);
+      // toggleNode decides from what the rows show: a is open, so it closes
+      // in both states.
+      final toggled = expanded.toggleNode(a);
+      expect(toggled.expansion, ExpansionState.withExpanded([r, b, c]));
+      expect(toggled.requestedExpansion, const ExpansionState.collapsed());
+    });
+
+    test('an id inside a compacted row maps to the row node in both', () {
+      final rows = tree.flatten(
+        expansion: const ExpansionState.collapsed(),
+        filter: textFiles,
+        compactFolders: true,
+      );
+      expect(describe(rows.rowOf(b)!), 'b/c|1|EC--|0');
+      final expanded = rows.expandNode(b);
+      expect(expanded.requestedExpansion, ExpansionState.withExpanded([c]));
+      final collapsed = rows.collapseNode(b);
+      expect(collapsed.expansion, ExpansionState.withExpanded([r, a, b]));
+      expect(collapsed.requestedExpansion, const ExpansionState.collapsed());
+    });
+
+    test('withExpansion re-applies the reveals only when asked', () {
+      final rows = tree.flatten(
+        expansion: const ExpansionState.collapsed(),
+        filter: textFiles,
+      );
+      // Without revealMatches, a collapsed state shows only the roots.
+      final plain = rows.withExpansion(const ExpansionState.collapsed());
+      expect(table(plain), ['r|0|-CL-|']);
+      expect(plain.expansion, const ExpansionState.collapsed());
+      expect(plain.requestedExpansion, const ExpansionState.collapsed());
+      // With revealMatches, the matches show again.
+      final again = plain.withExpansion(
+        const ExpansionState.collapsed(),
+        revealMatches: true,
+      );
+      expect(again, rows);
+      expect(again.expansion, rows.expansion);
+      expect(again.requestedExpansion, const ExpansionState.collapsed());
+      // Both states unchanged: the same rows.
+      expect(
+        identical(
+          rows.withExpansion(
+            const ExpansionState.collapsed(),
+            revealMatches: true,
+          ),
+          rows,
+        ),
+        isTrue,
+      );
+      // Only the requested state changes: the rows are reused.
+      final requestedOnly = rows.withExpansion(
+        ExpansionState.withExpanded([a]),
+        revealMatches: true,
+      );
+      expect(identical(requestedOnly, rows), isFalse);
+      expect(requestedOnly.expansion, rows.expansion);
+      expect(
+        requestedOnly.requestedExpansion,
+        ExpansionState.withExpanded([a]),
+      );
+      for (var i = 0; i < rows.length; i++) {
+        expect(identical(requestedOnly[i], rows[i]), isTrue);
+      }
+      // revealMatches without a filter changes nothing.
+      final unfiltered = tree.flatten(
+        expansion: const ExpansionState.collapsed(),
+      );
+      final same = unfiltered.withExpansion(
+        ExpansionState.withExpanded([r]),
+        revealMatches: true,
+      );
+      expect(identical(same.expansion, same.requestedExpansion), isTrue);
+      expect(table(same).first, 'other|0|-C-M|');
+    });
+
+    test('persisting requestedExpansion drops the search reveals', () {
+      // The user had /r open, then searched for .txt files.
+      final searched = tree.flatten(
+        expansion: ExpansionState.withExpanded([r]),
+        filter: textFiles,
+      );
+      expect(searched.expansion, ExpansionState.withExpanded([r, a, b, c]));
+      // During the search: open a (already revealed), close b (revealed),
+      // and open other (hidden by the search).
+      final edited = searched.expandNode(a).collapseNode(b).expandNode(other);
+      final json = edited.requestedExpansion.toJson();
+      final restored = ExpansionState.fromJson(
+        jsonDecode(jsonEncode(json)) as Map<String, Object?>,
+      );
+      expect(restored, ExpansionState.withExpanded([r, a, other]));
+      // The search is cleared: the user's choices survive, the folder only
+      // the search opened (c) does not.
+      final after = tree.flatten(expansion: restored);
+      expect(table(after), [
+        'other|0|EC-M|',
+        'q.md|1|--LM|1',
+        'r|0|ECLM|',
+        'a|1|EC-M|0',
+        'x.txt|2|---M|01',
+        'y.txt|2|--LM|01',
+        'b|1|-C-M|0',
+        'top.txt|1|--LM|0',
+      ]);
+      expect(edited.expansion.isExpanded(c), isTrue);
+      expect(restored.isExpanded(c), isFalse);
+    });
+  });
+
+  group('reveal', () {
+    test('expands the collapsed ancestors and reuses the other rows', () {
+      final rows = tree.flatten(expansion: const ExpansionState.collapsed());
+      final revealed = rows.reveal(z);
+      expect(table(revealed), [
+        'other|0|-C-M|',
+        'r|0|ECLM|',
+        'a|1|-C-M|0',
+        'b|1|EC-M|0',
+        'c|2|ECLM|01',
+        'z.txt|3|--LM|010',
+        'top.txt|1|--LM|0',
+      ]);
+      expect(revealed.expansion, ExpansionState.withExpanded([r, b, c]));
+      expect(revealed.requestedExpansion, revealed.expansion);
+      expect(identical(revealed[0], rows[0]), isTrue);
+      expect(identical(revealed[1], rows[1]), isFalse);
+      expect(revealed.indexOfNode(z), 5);
+    });
+
+    test('reveals a directory without expanding it', () {
+      final rows = tree.flatten(expansion: const ExpansionState.collapsed());
+      final revealed = rows.reveal(c);
+      expect(revealed.rowOf(c)!.isExpanded, isFalse);
+      expect(revealed.expansion, ExpansionState.withExpanded([r, b]));
+    });
+
+    test('only expands what is still collapsed', () {
+      final rows = tree.flatten(expansion: ExpansionState.withExpanded([r, c]));
+      final revealed = rows.reveal(z);
+      expect(revealed.expansion, ExpansionState.withExpanded([r, b, c]));
+    });
+
+    test('returns the same rows when nothing needs to change', () {
+      final rows = tree.flatten(expansion: const ExpansionState.collapsed());
+      expect(identical(rows.reveal(r), rows), isTrue);
+      expect(identical(rows.reveal(unknown), rows), isTrue);
+      final searched = tree.flatten(
+        expansion: const ExpansionState.collapsed(),
+        filter: textFiles,
+      );
+      // q.md does not match and has no matching descendant.
+      expect(identical(searched.reveal(q), searched), isTrue);
+      expect(identical(searched.reveal(other), searched), isTrue);
+      // Already visible.
+      expect(identical(searched.reveal(z), searched), isTrue);
+      final hidden = tree.flatten(showRoots: false);
+      expect(identical(hidden.reveal(r), hidden), isTrue);
+    });
+
+    test('never expands hidden roots', () {
+      final rows = tree.flatten(
+        expansion: const ExpansionState.collapsed(),
+        showRoots: false,
+      );
+      final revealed = rows.reveal(z);
+      expect(revealed.expansion, ExpansionState.withExpanded([b, c]));
+      expect(table(revealed), [
+        'q.md|0|---M|',
+        'a|0|-C-M|',
+        'b|0|EC-M|',
+        'c|1|ECLM|1',
+        'z.txt|2|--LM|10',
+        'top.txt|0|--LM|',
+      ]);
+    });
+
+    test('a node inside a visible compacted row is already visible', () {
+      final chain = DirectoryTree.fromPaths([
+        '/p/',
+        '/p/a/b/c/x.txt',
+        '/p/a/b/c/y.txt',
+        '/p/a/b/c/d/z.txt',
+      ]);
+      NodeId at(String path) => chain.idOf(path)!;
+      final rows = chain.flatten(
+        expansion: const ExpansionState.collapsed(),
+        compactFolders: true,
+      );
+      expect(table(rows), ['p/a/b/c|0|-CLM|']);
+      // Revealing a chain member changes nothing...
+      expect(identical(rows.reveal(at('/p/a/b')), rows), isTrue);
+      expect(identical(rows.reveal(at('/p/a/b/c')), rows), isTrue);
+      // ...while expanding an ancestor of it one by one would open the row,
+      // because a chain member acts on the chain's node.
+      expect(rows.expandNode(at('/p/a')).rowOf(at('/p/a/b'))!.isExpanded, true);
+      // A node below the row: only the rows' own nodes are expanded, never
+      // the chain members p, a, and b.
+      final deep = rows.reveal(at('/p/a/b/c/d/z.txt'));
+      expect(
+        deep.expansion,
+        ExpansionState.withExpanded([at('/p/a/b/c'), at('/p/a/b/c/d')]),
+      );
+      expect(table(deep), [
+        'p/a/b/c|0|ECLM|',
+        'd|1|EC-M|0',
+        'z.txt|2|--LM|01',
+        'x.txt|1|---M|0',
+        'y.txt|1|--LM|0',
+      ]);
+      final file = rows.reveal(at('/p/a/b/c/x.txt'));
+      expect(file.expansion, ExpansionState.withExpanded([at('/p/a/b/c')]));
+      expect(file.rowOf(at('/p/a/b/c/d'))!.isExpanded, isFalse);
+    });
+
+    test('applies to both states during a search', () {
+      final rows = tree.flatten(
+        expansion: const ExpansionState.collapsed(),
+        filter: textFiles,
+      );
+      // Collapse the revealed /r, then reveal z.txt again.
+      final closed = rows.collapseNode(r);
+      expect(table(closed), ['r|0|-CL-|']);
+      final revealed = closed.reveal(z);
+      expect(revealed.expansion, ExpansionState.withExpanded([r, a, b, c]));
+      expect(
+        revealed.requestedExpansion,
+        ExpansionState.withExpanded([r, b, c]),
+      );
+      expect(revealed.indexOfNode(z), greaterThan(0));
+    });
+  });
+
   group('the filter is never called again', () {
     test('after flatten, no update calls the filter', () {
       var calls = 0;
@@ -656,11 +934,17 @@ void main() {
         compactFolders: true,
       );
       expect(calls, tree.length);
-      for (final id in [r, a, b, c, other, q, top, unknown, a, r, r, c]) {
-        rows = rows.toggleNode(id).expandNode(id).collapseNode(id);
+      for (final id in [r, a, b, c, other, q, top, unknown, a, r, r, c, z]) {
+        rows = rows
+            .toggleNode(id)
+            .expandNode(id)
+            .collapseNode(id)
+            .collapseNode(r)
+            .reveal(id);
       }
       rows = rows
           .withExpansion(const ExpansionState.expanded())
+          .withExpansion(const ExpansionState.collapsed(), revealMatches: true)
           .withExpansion(const ExpansionState.collapsed());
       var checksum = 0;
       for (final row in rows) {
@@ -694,11 +978,16 @@ void main() {
             expect(calls, tree.length, reason: 'seed $seed');
             for (var step = 0; step < 40; step++) {
               final id = pickId(random, tree, rows);
-              rows = switch (random.nextInt(4)) {
+              rows = switch (random.nextInt(6)) {
                 0 => rows.expandNode(id),
                 1 => rows.collapseNode(id),
                 2 => rows.toggleNode(id),
-                _ => rows.withExpansion(randomExpansion(random, tree)),
+                3 => rows.reveal(id),
+                4 => rows.withExpansion(randomExpansion(random, tree)),
+                _ => rows.withExpansion(
+                  randomExpansion(random, tree),
+                  revealMatches: true,
+                ),
               };
               expect(rows.indexOfNode(id), greaterThanOrEqualTo(-1));
             }
@@ -718,34 +1007,74 @@ void main() {
           for (final compactFolders in const [false, true]) {
             for (final filtered in const [false, true]) {
               final filter = filtered ? randomFilter(random, tree) : null;
+              final initial = randomExpansion(random, tree);
+              final expandMatches = random.nextBool();
               var rows = tree.flatten(
-                expansion: randomExpansion(random, tree),
+                expansion: initial,
                 filter: filter,
-                expandMatches: random.nextBool(),
+                expandMatches: expandMatches,
                 compactFolders: compactFolders,
                 showRoots: showRoots,
               );
+              expect(rows.requestedExpansion, initial);
+              if (filter == null || !expandMatches) {
+                expect(
+                  identical(rows.requestedExpansion, rows.expansion),
+                  true,
+                );
+              }
+              // The requested state, modeled without any reveal.
+              var requested = initial;
               for (var step = 0; step < 30; step++) {
                 final id = pickId(random, tree, rows);
-                final operation = random.nextInt(3);
-                final next = switch (operation) {
-                  0 => rows.expandNode(id),
-                  1 => rows.collapseNode(id),
-                  _ => rows.toggleNode(id),
-                };
+                final operation = random.nextInt(9) ~/ 2;
                 final reason =
                     'seed $seed, showRoots $showRoots, compact '
                     '$compactFolders, filter $filtered, step $step, '
-                    '${['expand', 'collapse', 'toggle'][operation]} $id';
-                expectUpdate(rows, next, id, operation, reason);
-                final full = tree.flatten(
-                  expansion: next.expansion,
-                  filter: filter,
-                  expandMatches: false,
-                  compactFolders: compactFolders,
-                  showRoots: showRoots,
-                );
-                expectSameRows(next, full, reason);
+                    '${operationNames[operation]} $id';
+                final TreeRows<int> next;
+                if (operation == 4) {
+                  final state = randomExpansion(random, tree);
+                  final revealMatches = random.nextBool();
+                  next = rows.withExpansion(
+                    state,
+                    revealMatches: revealMatches,
+                  );
+                  requested = state;
+                  final full = tree.flatten(
+                    expansion: state,
+                    filter: filter,
+                    expandMatches: revealMatches,
+                    compactFolders: compactFolders,
+                    showRoots: showRoots,
+                  );
+                  expectSameRows(next, full, reason);
+                  if (state == rows.requestedExpansion &&
+                      full.expansion == rows.expansion) {
+                    expect(identical(next, rows), isTrue, reason: reason);
+                  }
+                } else {
+                  next = switch (operation) {
+                    0 => rows.expandNode(id),
+                    1 => rows.collapseNode(id),
+                    2 => rows.toggleNode(id),
+                    _ => rows.reveal(id),
+                  };
+                  final change = expectedChange(rows, id, operation);
+                  if (change != null) {
+                    requested = applyChange(requested, change);
+                  }
+                  expectUpdate(rows, next, id, operation, reason);
+                  final full = tree.flatten(
+                    expansion: next.expansion,
+                    filter: filter,
+                    expandMatches: false,
+                    compactFolders: compactFolders,
+                    showRoots: showRoots,
+                  );
+                  expectSameRows(next, full, reason);
+                }
+                expect(next.requestedExpansion, requested, reason: reason);
                 expectLookups(next, reason);
                 rows = next;
               }
@@ -773,13 +1102,16 @@ void main() {
               );
               for (var step = 0; step < 30; step++) {
                 final id = pickId(random, tree, rows);
-                final operation = random.nextInt(3);
+                final operation = random.nextInt(4);
                 final next = switch (operation) {
                   0 => rows.expandNode(id),
                   1 => rows.collapseNode(id),
-                  _ => rows.toggleNode(id),
+                  2 => rows.toggleNode(id),
+                  _ => rows.reveal(id),
                 };
-                seen.addAll(classify(rows, next, id, filtered: filtered));
+                seen.addAll(
+                  classify(rows, next, id, operation, filtered: filtered),
+                );
                 rows = next;
               }
             }
@@ -804,14 +1136,98 @@ void main() {
           'depth-0 rows from several roots',
           'update with hidden roots',
           'chain member under hidden roots',
+          'requested state only',
+          'reveal',
+          'reveal under hidden roots',
+          'reveal with compact folders',
+          'reveal of a visible node',
+          'reveal of a chain member',
+          'reveal of a filtered node',
+          'reveal of a hidden root',
         ]),
       );
     });
   });
 }
 
-/// Checks what an update did against the contract: which id's state
-/// changed, and that rows outside the changed block are reused.
+/// Names of the operations the property test picks, by number.
+const operationNames = [
+  'expand',
+  'collapse',
+  'toggle',
+  'reveal',
+  'withExpansion',
+];
+
+/// What an update should change, computed from [before] and the tree API
+/// alone: the ids whose state becomes `expanded` in both expansion states,
+/// or `null` when the update must return [before] unchanged.
+///
+/// [operation] is 0 (expandNode), 1 (collapseNode), 2 (toggleNode), or 3
+/// (reveal).
+({List<NodeId> ids, bool expanded})? expectedChange(
+  TreeRows<Object?> before,
+  NodeId id,
+  int operation,
+) {
+  final tree = before.tree;
+  final node = tree[id];
+  if (node == null || (node.isRoot && !before.showRoots)) return null;
+  if (operation == 3) {
+    if (before.indexOfNode(id) >= 0) return null;
+    if (!passesFilter(before.filter, tree, node)) return null;
+    return (
+      ids: [
+        for (final ancestor in tree.ancestorsOf(id))
+          if (!(ancestor.isRoot && !before.showRoots) &&
+              !continuesChain(before, ancestor))
+            ancestor.id,
+      ],
+      expanded: true,
+    );
+  }
+  if (node.isFile) return null;
+  final index = before.indexOfNode(id);
+  final target = index < 0 ? id : before[index].id;
+  final wanted = switch (operation) {
+    0 => true,
+    1 => false,
+    _ => !before.expansion.isExpanded(target),
+  };
+  return (ids: [target], expanded: wanted);
+}
+
+/// Whether [node] can be visible under [filter]: it or a descendant
+/// matches.
+bool passesFilter(
+  TreeFilter? filter,
+  DirectoryTree<Object?> tree,
+  TreeNode<Object?> node,
+) =>
+    filter == null ||
+    filter.matches(node) ||
+    tree.descendantsOf(node.id).any(filter.matches);
+
+/// Whether [node] shares its compacted row with its only child, so its own
+/// state is never consulted.
+bool continuesChain(TreeRows<Object?> rows, TreeNode<Object?> node) {
+  if (!rows.compactFolders ||
+      node is! DirectoryNode<Object?> ||
+      node.children.length != 1) {
+    return false;
+  }
+  return rows.tree[node.children.single]!.isDirectory;
+}
+
+ExpansionState applyChange(
+  ExpansionState state,
+  ({List<NodeId> ids, bool expanded}) change,
+) => change.expanded
+    ? state.expandAll(change.ids)
+    : state.collapseAll(change.ids);
+
+/// Checks what an update did against the contract: how both expansion
+/// states changed, and that every row outside the changed block is reused.
 void expectUpdate(
   TreeRows<Object?> before,
   TreeRows<Object?> after,
@@ -823,38 +1239,43 @@ void expectUpdate(
   expect(after.filter, same(before.filter), reason: reason);
   expect(after.compactFolders, before.compactFolders, reason: reason);
   expect(after.showRoots, before.showRoots, reason: reason);
-  final node = before.tree[id];
-  // Unknown ids, files, and hidden roots are no-ops.
-  if (node == null || node.isFile || (node.isRoot && !before.showRoots)) {
+  final change = expectedChange(before, id, operation);
+  if (change == null) {
     expect(identical(after, before), isTrue, reason: reason);
     return;
   }
-  final index = before.indexOfNode(id);
-  final target = index < 0 ? id : before[index].id;
-  final current = before.expansion.isExpanded(target);
-  final wanted = switch (operation) {
-    0 => true,
-    1 => false,
-    _ => !current,
-  };
-  if (wanted == current) {
-    expect(identical(after, before), isTrue, reason: reason);
-    return;
+  final effective = applyChange(before.expansion, change);
+  final requested = applyChange(before.requestedExpansion, change);
+  expect(after.expansion, effective, reason: reason);
+  expect(after.requestedExpansion, requested, reason: reason);
+  if (operation == 3) {
+    expect(after.indexOfNode(id), greaterThanOrEqualTo(0), reason: reason);
   }
-  expect(
-    after.expansion,
-    before.expansion.setExpanded(target, expanded: wanted),
-    reason: reason,
-  );
-  final problems = <String>[];
-  if (index < 0) {
-    if (after.length != before.length) problems.add('length changed');
-    for (var i = 0; i < before.length && i < after.length; i++) {
-      if (!identical(after[i], before[i])) problems.add('row $i replaced');
+  if (effective == before.expansion) {
+    // The rows do not change.
+    if (requested == before.requestedExpansion) {
+      expect(identical(after, before), isTrue, reason: reason);
+    } else {
+      expectAllRowsReused(before, after, reason);
     }
-    expect(problems, isEmpty, reason: reason);
     return;
   }
+  // The row whose state changed: the id's row (an id inside a compacted row
+  // finds that row), or for reveal the topmost collapsed deciding ancestor.
+  var index = before.indexOfNode(id);
+  if (operation == 3) {
+    NodeId? topmost;
+    for (final ancestor in change.ids) {
+      if (!before.expansion.isExpanded(ancestor)) topmost = ancestor;
+    }
+    index = before.indexOfNode(topmost!);
+    expect(index, greaterThanOrEqualTo(0), reason: reason);
+  }
+  if (index < 0) {
+    expectAllRowsReused(before, after, reason);
+    return;
+  }
+  final problems = <String>[];
   final oldEnd = blockEnd(before, index);
   final newEnd = blockEnd(after, index);
   for (var i = 0; i < index; i++) {
@@ -870,10 +1291,24 @@ void expectUpdate(
     }
   }
   if (identical(after[index], before[index])) problems.add('row not replaced');
-  if (after[index].isExpanded != wanted) problems.add('row state');
+  if (after[index].isExpanded != change.expanded) problems.add('row state');
   if (after[index].id != before[index].id) problems.add('row id');
-  if (wanted ? oldEnd != index + 1 : newEnd != index + 1) {
+  if (change.expanded ? oldEnd != index + 1 : newEnd != index + 1) {
     problems.add('block shape');
+  }
+  expect(problems, isEmpty, reason: reason);
+}
+
+/// Checks that [after] has exactly the row objects of [before].
+void expectAllRowsReused(
+  TreeRows<Object?> before,
+  TreeRows<Object?> after,
+  String reason,
+) {
+  final problems = <String>[];
+  if (after.length != before.length) problems.add('length changed');
+  for (var i = 0; i < before.length && i < after.length; i++) {
+    if (!identical(after[i], before[i])) problems.add('row $i replaced');
   }
   expect(problems, isEmpty, reason: reason);
 }
@@ -967,7 +1402,8 @@ void expectLookups(TreeRows<Object?> rows, String reason) {
 Set<String> classify(
   TreeRows<Object?> before,
   TreeRows<Object?> after,
-  NodeId id, {
+  NodeId id,
+  int operation, {
   required bool filtered,
 }) {
   final kinds = <String>{};
@@ -978,12 +1414,16 @@ Set<String> classify(
       depthZero.map((row) => row.chain.first.parent).toSet().length > 1) {
     kinds.add('depth-0 rows from several roots');
   }
+  if (operation == 3) return kinds..addAll(classifyReveal(before, after, id));
   if (node == null) return kinds..add('unknown');
   if (node.isFile) return kinds..add('file');
   if (node.isRoot && !before.showRoots) {
     return kinds..add(filtered ? 'hidden root with filter' : 'hidden root');
   }
   if (identical(after, before)) return kinds..add('unchanged');
+  if (after.expansion == before.expansion) {
+    return kinds..add('requested state only');
+  }
   if (!before.showRoots) kinds.add('update with hidden roots');
   final index = before.indexOfNode(id);
   if (index < 0) {
@@ -1003,6 +1443,30 @@ Set<String> classify(
   if (delta > 1) kinds.add('inserted several rows');
   if (delta < -1) kinds.add('removed several rows');
   return kinds;
+}
+
+/// The kinds of reveal that [before] -> [after] exercised.
+Set<String> classifyReveal(
+  TreeRows<Object?> before,
+  TreeRows<Object?> after,
+  NodeId id,
+) {
+  final node = before.tree[id];
+  if (node == null) return {'reveal of an unknown id'};
+  if (node.isRoot && !before.showRoots) return {'reveal of a hidden root'};
+  final index = before.indexOfNode(id);
+  if (index >= 0) {
+    return {
+      'reveal of a visible node',
+      if (before[index].id != id) 'reveal of a chain member',
+    };
+  }
+  if (identical(after, before)) return {'reveal of a filtered node'};
+  return {
+    'reveal',
+    if (!before.showRoots) 'reveal under hidden roots',
+    if (before.compactFolders) 'reveal with compact folders',
+  };
 }
 
 const _rootPrefixes = ['/r', '/s/t', 'C:/w', '//nas/share', 'rel', '/'];
