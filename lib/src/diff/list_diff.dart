@@ -89,9 +89,9 @@ final class ListDiff {
   /// message names the key, the list, and both indices. Equal keys
   /// elsewhere (for example both in the common prefix, or one in the prefix
   /// and one in the middle region) are detected only when assertions are
-  /// enabled (debug builds and tests), where they throw the same
-  /// [ArgumentError] once the middle region has been checked; with
-  /// assertions disabled such input yields an unspecified diff.
+  /// enabled, as in debug builds, where they throw the same [ArgumentError]
+  /// once the middle region has been checked; with assertions disabled such
+  /// input yields an unspecified diff.
   ///
   /// ## Cost
   ///
