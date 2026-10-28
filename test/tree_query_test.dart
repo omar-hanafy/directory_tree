@@ -289,10 +289,10 @@ void main() {
       for (var round = 0; round < 2000; round++) {
         final words = [
           for (var w = random.nextInt(4); w > 0; w--)
-            _randomString(random, 'aAb', 1 + random.nextInt(3)),
+            _randomString(random, 'aAb/', 1 + random.nextInt(3)),
         ];
         final caseSensitive = random.nextBool();
-        final text = _randomString(random, 'aAbc', random.nextInt(20));
+        final text = _randomString(random, 'aAbc/', random.nextInt(20));
         final query = TreeQuery.parse(
           words.join(' '),
           caseSensitive: caseSensitive,
@@ -437,6 +437,262 @@ void main() {
     });
   });
 
+  group('terms with a separator', () {
+    final project = DirectoryTree<Never>.build(const [
+      TreeEntry.file('/r/lib/src/utils/a.dart'),
+      TreeEntry.file('/r/lib/src/utils/gen/x.g.dart'),
+      TreeEntry.file('/r/lib/src/b.dart'),
+      TreeEntry.file('/r/lib/main.dart'),
+      TreeEntry.file('/r/README.md'),
+    ]);
+
+    Set<String> paths(
+      DirectoryTree<Object?> tree,
+      String query, {
+      bool caseSensitive = false,
+    }) {
+      final parsed = TreeQuery.parse(query, caseSensitive: caseSensitive);
+      return {
+        for (final node in tree.nodes)
+          if (parsed.matches(node)) node.path.toString(),
+      };
+    }
+
+    final cases = <String, Set<String>>{
+      // The occurrence must reach into the node's own name.
+      'lib/src': {'/r/lib/src'},
+      'src/ut': {'/r/lib/src/utils'},
+      'lib/src/utils': {'/r/lib/src/utils'},
+      'r/lib': {'/r/lib'},
+      // '/r' also reaches into 'README.md' when case is ignored.
+      '/r': {'/r', '/r/README.md'},
+      '/r/': {},
+      '/README': {'/r/README.md'},
+      'utils/a': {'/r/lib/src/utils/a.dart'},
+      'b/s': {'/r/lib/src'},
+      'lib/': {},
+      'lib/src/': {},
+      'nope/src': {},
+      // Quoted phrases and backslashes.
+      '"lib/src"': {'/r/lib/src'},
+      r'lib\src': {'/r/lib/src'},
+      r'"src\utils"': {'/r/lib/src/utils'},
+      // Case folding.
+      'LIB/SRC': {'/r/lib/src'},
+      // AND with other terms.
+      'lib/src type:file': {},
+      'src/b ext:dart': {'/r/lib/src/b.dart'},
+      // Negation.
+      '!lib/src type:dir': {
+        '/r',
+        '/r/lib',
+        '/r/lib/src/utils',
+        '/r/lib/src/utils/gen',
+      },
+      // Globs match the last k path components.
+      'src/*.dart': {'/r/lib/src/b.dart'},
+      'src/**/*.dart': {'/r/lib/src/utils/a.dart'},
+      '*/*.dart': {
+        '/r/lib/src/utils/a.dart',
+        '/r/lib/src/utils/gen/x.g.dart',
+        '/r/lib/src/b.dart',
+        '/r/lib/main.dart',
+      },
+      'utils/*/*.g.dart': {'/r/lib/src/utils/gen/x.g.dart'},
+      '*/utils': {'/r/lib/src/utils'},
+      'lib/s?c': {'/r/lib/src'},
+      '/*': {'/r'},
+      '/*/lib': {'/r/lib'},
+      r'src\*.dart': {'/r/lib/src/b.dart'},
+      'SRC/*.DART': {'/r/lib/src/b.dart'},
+      '!*/*.dart type:file': {'/r/README.md'},
+      'r/*/src/b.dart': {'/r/lib/src/b.dart'},
+      'x/*/src/b.dart': {},
+      // The path root's empty component counts, so `*` may match nothing.
+      '*/r/lib/src/b.dart': {'/r/lib/src/b.dart'},
+      '/r/lib/src/b.dart?': {},
+    };
+    for (final entry in cases.entries) {
+      test('${_show(entry.key)} matches ${entry.value}', () {
+        expect(paths(project, entry.key), entry.value);
+      });
+    }
+
+    test('the class documentation examples hold', () {
+      final docs = DirectoryTree.fromPaths([
+        '/repo/lib/main.dart',
+        '/repo/lib/main.g.dart',
+        '/repo/README.md',
+      ]);
+      final query = TreeQuery.parse('ext:dart !*.g.dart');
+      expect(docs.nodes.where(query.matches).map((n) => n.name), ['main.dart']);
+      expect(TreeQuery.parse('MAIN').matchRanges('main.dart'), [
+        (start: 0, end: 4),
+      ]);
+      expect(TreeQuery.parse('   ').matchesAll, isTrue);
+      final lib = TreeQuery.parse('repo/lib');
+      expect(docs.nodes.where(lib.matches).map((n) => n.name), ['lib']);
+      expect(lib.matchRanges('repo/lib'), [(start: 0, end: 8)]);
+      final generated = TreeQuery.parse('lib/*.g.dart');
+      expect(docs.nodes.where(generated.matches).map((n) => n.name), [
+        'main.g.dart',
+      ]);
+    });
+
+    test('case sensitivity applies to fragments and segment globs', () {
+      expect(paths(project, 'LIB/SRC', caseSensitive: true), isEmpty);
+      expect(paths(project, 'lib/src', caseSensitive: true), {'/r/lib/src'});
+      expect(paths(project, 'SRC/*.dart', caseSensitive: true), isEmpty);
+      expect(paths(project, 'src/*.dart', caseSensitive: true), {
+        '/r/lib/src/b.dart',
+      });
+    });
+
+    test('typing a compacted row label finds that row', () {
+      final deeper = DirectoryTree<Never>.build(const [
+        TreeEntry.file('/r/lib/src/utils/a.dart'),
+        TreeEntry.file('/r/lib/src/utils/b.dart'),
+        TreeEntry.file('/r/README.md'),
+      ]);
+      final compacted = deeper
+          .flatten(compactFolders: true)
+          .firstWhere((row) => row.label.contains('/'));
+      expect(compacted.label, 'lib/src/utils');
+      expect(compacted.node.path.toString(), '/r/lib/src/utils');
+      for (final typed in ['lib/src/utils', 'src/utils', 'b/src/u', 'c/ut']) {
+        final query = TreeQuery.parse(typed);
+        expect(query.matches(compacted.node), isTrue, reason: typed);
+        expect(query.matchRanges(compacted.label), isNotEmpty, reason: typed);
+      }
+      // A prefix of the label matches a chain member, which the view folds
+      // into the same row.
+      expect(paths(deeper, 'lib/src'), {'/r/lib/src'});
+      expect(paths(deeper, 'src/ut'), {'/r/lib/src/utils'});
+      for (final typed in ['lib/src', 'src/ut', 'lib/src/utils']) {
+        final filtered = deeper.flatten(
+          filter: TreeQuery.parse(typed),
+          compactFolders: true,
+        );
+        expect(
+          [for (final row in filtered) row.label],
+          contains('lib/src/utils'),
+          reason: typed,
+        );
+      }
+    });
+
+    test('typing a disambiguated top-level label finds that node', () {
+      final twins = DirectoryTree<Never>.build(const [
+        TreeEntry.file('/x/a/src/f.txt'),
+        TreeEntry.file('/y/b/src/g.txt'),
+      ]);
+      final labels = [for (final node in twins.nodes) node.label];
+      expect(labels, containsAll(['a/src', 'b/src']));
+      expect(paths(twins, 'a/src'), {'/x/a/src'});
+      expect(paths(twins, 'B/SRC'), {'/y/b/src'});
+      expect(paths(twins, 'src/f'), {'/x/a/src/f.txt'});
+      expect(TreeQuery.parse('a/src').matchRanges('a/src'), [
+        (start: 0, end: 5),
+      ]);
+    });
+
+    test('Windows-style input', () {
+      final windows = DirectoryTree<Never>.build(const [
+        TreeEntry.file(r'C:\Proj\Lib\Src\X.dart'),
+        TreeEntry.file(r'C:\Proj\Lib\y.dart'),
+      ]);
+      expect(paths(windows, r'lib\src'), {'C:/Proj/Lib/Src'});
+      expect(paths(windows, r'Lib\Src', caseSensitive: true), {
+        'C:/Proj/Lib/Src',
+      });
+      expect(paths(windows, r'lib\src', caseSensitive: true), isEmpty);
+      expect(paths(windows, r'src\x.'), {'C:/Proj/Lib/Src/X.dart'});
+      expect(paths(windows, r'c:\proj\lib'), {'C:/Proj/Lib'});
+      expect(paths(windows, r'lib\*.dart'), {'C:/Proj/Lib/y.dart'});
+      expect(
+        paths(windows, r'!lib\src type:dir'),
+        isNot(contains('C:/Proj/Lib/Src')),
+      );
+      expect(TreeQuery.parse(r'lib\src').matchRanges('Lib/Src'), [
+        (start: 0, end: 7),
+      ]);
+    });
+
+    test(
+      'a backslash name still matches literally when it is no separator',
+      () {
+        final posix = DirectoryTree<Never>.build(
+          const [TreeEntry.file(r'/r/a\b.txt')],
+          options: const TreeOptions(
+            paths: PathPolicy(backslashIsSeparator: false),
+          ),
+        );
+        expect(paths(posix, r'a\b'), {r'/r/a\b.txt'});
+        expect(paths(posix, r'a\*.txt'), {r'/r/a\b.txt'});
+        expect(TreeQuery.parse(r'a\b').matchRanges(r'a\b.txt'), [
+          (start: 0, end: 3),
+        ]);
+      },
+    );
+
+    test('matchRanges highlights fragments in labels but not globs', () {
+      expect(TreeQuery.parse('lib/src').matchRanges('lib/src/utils'), [
+        (start: 0, end: 7),
+      ]);
+      expect(TreeQuery.parse('src/ut').matchRanges('lib/src/utils'), [
+        (start: 4, end: 10),
+      ]);
+      expect(TreeQuery.parse('lib/src utils').matchRanges('lib/src/utils'), [
+        (start: 0, end: 7),
+        (start: 8, end: 13),
+      ]);
+      expect(TreeQuery.parse('lib/ /src').matchRanges('lib/src'), [
+        (start: 0, end: 7),
+      ]);
+      expect(TreeQuery.parse('!lib/src').matchRanges('lib/src'), isEmpty);
+      expect(TreeQuery.parse('src/*').matchRanges('src/a'), isEmpty);
+    });
+
+    test('agrees with a brute-force oracle on random trees', () {
+      final random = Random(2024);
+      for (var round = 0; round < 300; round++) {
+        final entries = <TreeEntry<Never>>[
+          for (var i = 1 + random.nextInt(8); i > 0; i--)
+            TreeEntry.file(
+              '/${[for (var d = 1 + random.nextInt(4); d > 0; d--) _randomString(random, 'aAb', 1 + random.nextInt(2))].join('/')}',
+            ),
+        ];
+        final tree = DirectoryTree<Never>.build(entries);
+        for (var q = 0; q < 10; q++) {
+          final term = random.nextBool()
+              ? _randomString(random, 'aB/*?', 2 + random.nextInt(6))
+              : _randomString(random, 'aAb/', 2 + random.nextInt(6));
+          if (!term.contains('/')) continue;
+          final caseSensitive = random.nextBool();
+          final query = TreeQuery.parse(term, caseSensitive: caseSensitive);
+          for (final node in tree.nodes) {
+            expect(
+              query.matches(node),
+              _oracle(node, term, caseSensitive: caseSensitive),
+              reason: '$term on ${node.path} (caseSensitive: $caseSensitive)',
+            );
+          }
+        }
+      }
+    });
+
+    test('segment globs do not backtrack exponentially', () {
+      final long = 'a' * 20000;
+      final deep = DirectoryTree<Never>.build([
+        TreeEntry.file('/$long/$long/${long}b'),
+      ]);
+      final query = TreeQuery.parse('*a*a*a*a*/*a*a*a*a*/*a*a*a*a*a*c');
+      final stopwatch = Stopwatch()..start();
+      expect(deep.nodes.where(query.matches), isEmpty);
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)));
+    }, timeout: const Timeout(Duration(seconds: 30)));
+  });
+
   group('value semantics', () {
     test('equality and hashCode use source and caseSensitive', () {
       final a = TreeQuery.parse('ext:dart main');
@@ -505,6 +761,40 @@ void _checkRanges(List<Range> ranges, String text) {
     expect(range.start, greaterThan(previousEnd));
     previousEnd = range.end;
   }
+}
+
+/// Spec oracle for a term containing '/': for a plain term, a literal name
+/// match or an occurrence in the path string that ends after the name
+/// starts (checked at every index); for a glob, a regular expression over
+/// the name or over the last k components of the path string.
+bool _oracle(
+  TreeNode<Object?> node,
+  String term, {
+  required bool caseSensitive,
+}) {
+  String fold(String s) => caseSensitive ? s : s.toLowerCase();
+  final name = fold(node.name);
+  final path = fold(node.path.toString());
+  final t = fold(term);
+  if (t.contains('*') || t.contains('?')) {
+    bool whole(String pattern, String subject) => RegExp(
+      '^${pattern.split('').map((c) {
+        if (c == '*') return '.*';
+        if (c == '?') return '.';
+        return RegExp.escape(c);
+      }).join()}\$',
+    ).hasMatch(subject);
+    final k = t.split('/').length;
+    final parts = path.split('/');
+    final tail = parts.sublist(max(0, parts.length - k)).join('/');
+    return whole(t, name) || whole(t, tail);
+  }
+  if (name.contains(t)) return true;
+  final nameStart = node.path.segments.isEmpty ? 0 : path.length - name.length;
+  for (var i = 0; i + t.length <= path.length; i++) {
+    if (path.startsWith(t, i) && i + t.length > nameStart) return true;
+  }
+  return false;
 }
 
 String _show(String text) =>

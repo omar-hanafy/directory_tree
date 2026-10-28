@@ -7,8 +7,8 @@ import 'package:meta/meta.dart';
 ///
 /// Use [TreeQuery.parse] to turn what a user types into a filter, pass it to
 /// a view, and call [matchRanges] to highlight the matched parts of each
-/// visible name. Parsing never throws: text the syntax does not recognize is
-/// searched for literally.
+/// visible label. Parsing never throws: text the syntax does not recognize
+/// is searched for literally.
 ///
 /// ## Syntax
 ///
@@ -19,7 +19,9 @@ import 'package:meta/meta.dart';
 /// | --- | --- |
 /// | `main` | nodes whose name contains `main` |
 /// | `*.dart`, `test_?.md` | nodes whose whole name matches the glob: `*` is any run of characters (including none), `?` is exactly one character |
-/// | `"my notes"` | nodes whose name contains `my notes`; the quoted text is literal, so `"*.g"` searches for `*.g` and `"ext:x"` for `ext:x` |
+/// | `lib/src`, `src/ut`, `a/src` | nodes whose canonical path string contains the term at an occurrence that reaches into the node's own name: `lib/src` matches `src` in `/r/lib/src` but not `/r/lib/src/utils`, and `src/ut` matches `utils` in `/r/lib/src/utils`; `\` is read as `/` |
+/// | `src/*.dart`, `lib/*/*.g.dart` | nodes whose last k path components, joined with `/`, match the glob, where k is the number of `/`-separated parts of the glob; `**` is the same as `*` |
+/// | `"my notes"` | nodes whose name contains `my notes`; the quoted text is literal, so `"*.g"` searches for `*.g` and `"ext:x"` for `ext:x`; a phrase with `/` (`"my dir/a b"`) matches like `lib/src` |
 /// | `!term` | nodes that do not match `term`; `term` may be any other kind of term, including a quoted phrase |
 /// | `ext:dart`, `ext:.dart`, `ext:dart,md` | files whose name ends with `.` plus any listed extension (`ext:tar.gz` works too); directories never match |
 /// | `type:file`, `type:f` | files |
@@ -28,8 +30,18 @@ import 'package:meta/meta.dart';
 ///
 /// Details:
 ///
-/// * Names are [TreeNode.name], not [TreeNode.label], so a top-level node is
-///   matched by its own name and not by a disambiguating label.
+/// * Terms without `/` or `\` look at [TreeNode.name] only. Terms with a
+///   separator also look at the canonical path string
+///   (`TreePath.toString`), so typing what a view shows works: a compacted
+///   folder row labelled `lib/src/utils` (see `TreeRows.compactFolders`)
+///   matches `lib/src/utils`, `lib/src`, and `src/ut`, and a disambiguated
+///   top-level label such as `a/src` ([TreeNode.label]) matches `a/src`.
+///   Only the node whose name the occurrence reaches into matches, not its
+///   descendants, so a view shows the typed folder and its ancestors; a
+///   term that ends with `/` (`lib/`) reaches no name and matches only names
+///   that contain it literally. Such a term still also matches a name that
+///   contains it literally, which only happens for path roots such as `/`
+///   or names with a `\` under a policy where `\` is not a separator.
 /// * Whitespace is any character that [String.trim] removes, including tabs
 ///   and line breaks.
 /// * A quote starts a phrase only at the start of a term (after an optional
@@ -50,14 +62,14 @@ import 'package:meta/meta.dart';
 ///
 /// ## Case sensitivity
 ///
-/// Names, globs, and `path:` values are compared case-insensitively unless
-/// [caseSensitive] is true. `ext:` and `type:` always ignore case, because
-/// extensions are conventionally case-insensitive (`IMG.JPG` is a `jpg`
-/// file) and kinds are keywords. Case-insensitive comparison lowercases each
-/// character on its own and keeps a character unchanged when lowercasing
-/// would change its length (such as `İ`), so [matchRanges] indexes line up
-/// with the original text. It is not full Unicode case folding: `ß` does not
-/// match `ss`.
+/// Names, path fragments, globs, and `path:` values are compared
+/// case-insensitively unless [caseSensitive] is true. `ext:` and `type:`
+/// always ignore case, because extensions are conventionally
+/// case-insensitive (`IMG.JPG` is a `jpg` file) and kinds are keywords.
+/// Case-insensitive comparison lowercases each character on its own and
+/// keeps a character unchanged when lowercasing would change its length
+/// (such as `İ`), so [matchRanges] indexes line up with the original text.
+/// It is not full Unicode case folding: `ß` does not match `ss`.
 ///
 /// ## Examples
 ///
@@ -73,6 +85,14 @@ import 'package:meta/meta.dart';
 ///
 /// TreeQuery.parse('MAIN').matchRanges('main.dart'); // [(start: 0, end: 4)]
 /// TreeQuery.parse('   ').matchesAll; // true
+///
+/// // Typing a path fragment, as shown by a compacted row.
+/// final lib = TreeQuery.parse('repo/lib');
+/// tree.nodes.where(lib.matches).map((n) => n.name); // (lib)
+/// lib.matchRanges('repo/lib'); // [(start: 0, end: 8)]
+///
+/// final generated = TreeQuery.parse('lib/*.g.dart');
+/// tree.nodes.where(generated.matches).map((n) => n.name); // (main.g.dart)
 /// ```
 ///
 /// Combine a query with other filters through [and], [or], and [negate].
@@ -95,7 +115,7 @@ final class TreeQuery extends TreeFilter {
     final terms = _Parser(query, caseSensitive: caseSensitive).parse();
     final highlights = <String>[
       for (final term in terms)
-        if (!term.negated && term is _TextTerm) term.text,
+        if (!term.negated && term is _TextTerm) ...term.highlights,
     ];
     return TreeQuery._(
       query,
@@ -131,9 +151,11 @@ final class TreeQuery extends TreeFilter {
   ///
   /// Always true when [matchesAll]. Terms are tested in query order and
   /// testing stops at the first failing term. Runs in
-  /// O(terms x (name length + path length)) for plain, key, and quoted terms;
-  /// a glob term costs O(name length x glob length) in the worst case and
-  /// never backtracks exponentially.
+  /// O(terms x (name length + path length)) for plain, key, and quoted terms
+  /// (times the term length in the worst case of a highly repetitive
+  /// substring search); a glob term costs O(name length x glob length), or
+  /// O(path length x glob length) when it contains `/`, in the worst case
+  /// and never backtracks exponentially.
   @override
   bool matches(TreeNode<Object?> node) {
     if (_terms.isEmpty) return true;
@@ -147,18 +169,24 @@ final class TreeQuery extends TreeFilter {
   /// The ranges of [text] to highlight: every occurrence of every positive
   /// plain-text term, sorted and merged.
   ///
-  /// Plain terms and quoted phrases contribute; globs, `key:value` terms, and
-  /// negated terms do not. Occurrences are found case-insensitively unless
-  /// [caseSensitive] is true. Overlapping and adjacent occurrences merge into
-  /// one range, so the result is sorted by `start`, ranges never overlap or
-  /// touch, and every range is non-empty. Each range covers
-  /// `text.substring(start, end)` in UTF-16 code units of [text] as given.
+  /// Plain terms and quoted phrases contribute, including terms with `/`
+  /// (so `lib/src` highlights `(start: 0, end: 7)` in a compacted label
+  /// `lib/src/utils`; a `\` in such a term is looked for both as typed and
+  /// as `/`); globs, `key:value` terms, and negated terms do not. Pass the
+  /// text a view displays, such as `TreeRow.label`. Occurrences are found
+  /// case-insensitively unless [caseSensitive] is true. Overlapping and
+  /// adjacent occurrences merge into one range, so the result is sorted by
+  /// `start`, ranges never overlap or touch, and every range is non-empty.
+  /// Each range covers `text.substring(start, end)` in UTF-16 code units of
+  /// [text] as given.
   ///
   /// Returns an empty list when no term occurs in [text], when [text] is
   /// empty, and when the query has no positive plain terms. For a node that
   /// [matches], the result for its name is non-empty whenever the query has
-  /// a positive plain term. The returned list is unmodifiable. Runs in
-  /// O(terms x text length x term length) in the worst case.
+  /// a positive plain term without `/` or `\`; a term with a separator
+  /// usually highlights only in a label that shows the parent folders too.
+  /// The returned list is unmodifiable. Runs in O(terms x text length x term
+  /// length) in the worst case.
   List<({int start, int end})> matchRanges(String text) {
     if (_highlights.isEmpty || text.isEmpty) {
       return const <({int start, int end})>[];
@@ -242,6 +270,27 @@ final class _Subject {
   late final String path = caseSensitive
       ? node.path.toString()
       : _fold(node.path.toString());
+
+  /// Where the node's own name starts in [path]: the canonical string ends
+  /// with the last segment, and a path root is all name. Folding keeps the
+  /// length, so this indexes the folded [path] too.
+  late final int nameStart = node.path.segments.isEmpty
+      ? 0
+      : path.length - node.path.segments.last.length;
+
+  /// The last [count] `/`-separated components of [path] as runes, or all of
+  /// [path] when it has fewer components. Runs in O(path length).
+  List<int> tailRunes(int count) {
+    var start = 0;
+    var seen = 0;
+    for (var i = path.length - 1; i >= 0; i--) {
+      if (path.codeUnitAt(i) == _slash && ++seen == count) {
+        start = i + 1;
+        break;
+      }
+    }
+    return path.substring(start).runes.toList(growable: false);
+  }
 }
 
 sealed class _Term {
@@ -255,27 +304,66 @@ sealed class _Term {
   bool test(_Subject subject);
 }
 
-/// A plain term or quoted phrase: the name contains [text].
+/// A plain term or quoted phrase: the name contains [text], or, for a term
+/// with a separator, the path contains [segmentText] at an occurrence that
+/// reaches into the node's own name.
 final class _TextTerm extends _Term {
-  _TextTerm(this.text, {required super.negated});
+  _TextTerm(this.text, this.segmentText, {required super.negated});
 
   /// The search text, folded when the query is case-insensitive. Never empty.
   final String text;
 
+  /// [text] with `\` replaced by `/` when [text] contains `/` or `\`;
+  /// otherwise `null`.
+  final String? segmentText;
+
+  /// The texts [TreeQuery.matchRanges] looks for.
+  List<String> get highlights {
+    final segment = segmentText;
+    return segment == null || segment == text ? [text] : [text, segment];
+  }
+
   @override
-  bool test(_Subject subject) => subject.name.contains(text);
+  bool test(_Subject subject) {
+    if (subject.name.contains(text)) return true;
+    final segment = segmentText;
+    if (segment == null) return false;
+    // The last occurrence ends furthest right, so it is the only one that
+    // needs checking: it reaches into the name if any occurrence does.
+    final index = subject.path.lastIndexOf(segment);
+    return index >= 0 && index + segment.length > subject.nameStart;
+  }
 }
 
-/// A plain term containing `*` or `?`: the whole name matches the glob.
+/// A plain term containing `*` or `?`: the whole name matches the glob, or,
+/// for a glob with a separator, the last [segmentCount] path components
+/// match [segmentPattern].
 final class _GlobTerm extends _Term {
-  _GlobTerm(this.pattern, {required super.negated});
+  _GlobTerm(
+    this.pattern,
+    this.segmentPattern,
+    this.segmentCount, {
+    required super.negated,
+  });
 
   /// The pattern as runes (folded when case-insensitive), with runs of `*`
   /// collapsed to one.
   final List<int> pattern;
 
+  /// [pattern] with `\` read as `/`, when the term contains `/` or `\`;
+  /// otherwise `null`.
+  final List<int>? segmentPattern;
+
+  /// The number of `/`-separated parts of [segmentPattern] (0 without one).
+  final int segmentCount;
+
   @override
-  bool test(_Subject subject) => _globMatches(pattern, subject.nameRunes);
+  bool test(_Subject subject) {
+    if (_globMatches(pattern, subject.nameRunes)) return true;
+    final segments = segmentPattern;
+    return segments != null &&
+        _globMatches(segments, subject.tailRunes(segmentCount));
+  }
 }
 
 /// `ext:a,b`: a file whose folded name ends with one of [suffixes] and has
@@ -327,6 +415,7 @@ const int _bang = 0x21; // !
 const int _colon = 0x3A; // :
 const int _star = 0x2A; // *
 const int _question = 0x3F; // ?
+const int _slash = 0x2F; // /
 
 /// A single left-to-right pass over the query. Every index is checked
 /// against the length before use, so no input can make it throw.
@@ -361,9 +450,7 @@ final class _Parser {
     }
     if (source.codeUnitAt(index) == _quote) {
       final phrase = _readQuoted();
-      if (phrase.isNotEmpty) {
-        terms.add(_TextTerm(_caseFold(phrase), negated: negated));
-      }
+      if (phrase.isNotEmpty) terms.add(_textTerm(phrase, negated: negated));
       return;
     }
     // A bare word runs to the next whitespace. Quotes inside it are literal,
@@ -425,13 +512,39 @@ final class _Parser {
   void _addPlain(String text, {required bool negated}) {
     // Callers only pass non-empty words, but stay defensive.
     if (text.isEmpty) return;
-    final folded = _caseFold(text);
-    if (text.contains('*') || text.contains('?')) {
-      terms.add(_GlobTerm(_compileGlob(folded), negated: negated));
-    } else {
-      terms.add(_TextTerm(folded, negated: negated));
+    if (!text.contains('*') && !text.contains('?')) {
+      terms.add(_textTerm(text, negated: negated));
+      return;
     }
+    final folded = _caseFold(text);
+    List<int>? segmentPattern;
+    var segmentCount = 0;
+    if (_hasSeparator(folded)) {
+      final normalized = folded.replaceAll(r'\', '/');
+      segmentPattern = _compileGlob(normalized);
+      segmentCount = '/'.allMatches(normalized).length + 1;
+    }
+    terms.add(
+      _GlobTerm(
+        _compileGlob(folded),
+        segmentPattern,
+        segmentCount,
+        negated: negated,
+      ),
+    );
   }
+
+  _TextTerm _textTerm(String text, {required bool negated}) {
+    final folded = _caseFold(text);
+    return _TextTerm(
+      folded,
+      _hasSeparator(folded) ? folded.replaceAll(r'\', '/') : null,
+      negated: negated,
+    );
+  }
+
+  static bool _hasSeparator(String text) =>
+      text.contains('/') || text.contains(r'\');
 
   _Term? _keyTerm(String key, String value, {required bool negated}) {
     if (value.isEmpty) return null;
