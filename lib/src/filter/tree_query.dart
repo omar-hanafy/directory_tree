@@ -125,10 +125,18 @@ final class TreeQuery extends TreeFilter {
       for (final term in terms)
         if (!term.negated && term is _TextTerm) ...term.highlights,
     ];
+    // Every term is a pure predicate and the query is their AND, so the
+    // order cannot change a result; test the cheapest kinds first. Bucketing
+    // keeps the query order within a kind (List.sort is not stable).
+    final ordered = <_Term>[
+      for (var cost = 0; cost <= _Term.maxCost; cost++)
+        for (final term in terms)
+          if (term.cost == cost) term,
+    ];
     return TreeQuery._(
       query,
       caseSensitive,
-      List<_Term>.unmodifiable(terms),
+      List<_Term>.unmodifiable(ordered),
       List<String>.unmodifiable(highlights),
     );
   }
@@ -157,19 +165,134 @@ final class TreeQuery extends TreeFilter {
 
   /// Whether [node] matches every term of this query.
   ///
-  /// Always true when [matchesAll]. Terms are tested in query order and
-  /// testing stops at the first failing term. Runs in
-  /// O(terms x (name length + path length)) for plain, key, and quoted terms
-  /// (times the term length in the worst case of a highly repetitive
-  /// substring search); a glob term costs O(name length x glob length), or
-  /// O(path length x glob length) when it contains `/`, in the worst case
-  /// and never backtracks exponentially.
+  /// Always true when [matchesAll]. Cheap terms (`type:`, then `ext:`) are
+  /// tested before name, path, and glob terms, and testing stops at the
+  /// first failing term; the order never changes the result. In the common
+  /// case (an ASCII name and path) it allocates nothing: case-insensitive
+  /// comparisons lowercase `A`-`Z` while comparing, and only a non-ASCII
+  /// name or path is copied, once per call, to fold it (and a glob over one
+  /// is converted to runes).
+  ///
+  /// Runs in O(terms x (name length + path length)) for plain, key, and
+  /// quoted terms (times the term length in the worst case of a highly
+  /// repetitive substring search); a glob term costs O(name length x glob
+  /// length), or O(path length x glob length) when it contains `/`, in the
+  /// worst case and never backtracks exponentially.
   @override
   bool matches(TreeNode<Object?> node) {
-    if (_terms.isEmpty) return true;
-    final subject = _Subject(node, caseSensitive: caseSensitive);
-    for (final term in _terms) {
-      if (term.test(subject) == term.negated) return false;
+    final terms = _terms;
+    if (terms.isEmpty) return true;
+    final caseSensitive = this.caseSensitive;
+    final name = node.name;
+    // Per-call facts, computed at most once and only when a term needs them.
+    // They live in locals instead of a helper object so the common case
+    // allocates nothing. For the ints, -1 means not computed yet.
+    var nameAscii = -1;
+    String? foldedName; // _fold(name); built only for non-ASCII names.
+    String? path; // node.path.toString(), a stored field.
+    var pathAscii = -1;
+    String? foldedPath; // _fold(path); built only for non-ASCII paths.
+    for (var t = 0; t < terms.length; t++) {
+      final term = terms[t];
+      bool hit;
+      switch (term) {
+        case _TypeTerm():
+          hit = node.isDirectory == term.directory;
+        case _ExtTerm():
+          // Extensions ignore case even in a case-sensitive query.
+          hit = false;
+          if (node.isFile) {
+            if (nameAscii < 0) nameAscii = _isAscii(name) ? 1 : 0;
+            hit = nameAscii == 1
+                ? _endsWithAnyAscii(name, term.suffixes)
+                : _endsWithAny(foldedName ??= _fold(name), term.suffixes);
+          }
+        case _TextTerm():
+          final text = term.text;
+          if (caseSensitive) {
+            hit = _indexOf(name, text) >= 0;
+          } else if (nameAscii == 0) {
+            hit = (foldedName ??= _fold(name)).contains(text);
+          } else {
+            // One pass that searches and checks for ASCII at once.
+            final index = _indexOfAscii(name, text);
+            if (index == _notAscii) {
+              nameAscii = 0;
+              hit = (foldedName ??= _fold(name)).contains(text);
+            } else {
+              if (index < 0) nameAscii = 1;
+              hit = index >= 0;
+            }
+          }
+          final segment = term.segmentText;
+          if (!hit && segment != null) {
+            final fullPath = path ??= node.path.toString();
+            final int index;
+            if (caseSensitive) {
+              index = fullPath.lastIndexOf(segment);
+            } else {
+              if (pathAscii < 0) pathAscii = _isAscii(fullPath) ? 1 : 0;
+              index = pathAscii == 1
+                  ? _lastIndexOfAscii(fullPath, segment)
+                  : (foldedPath ??= _fold(fullPath)).lastIndexOf(segment);
+            }
+            // The canonical string ends with the last segment, and a path
+            // root is all name. Folding keeps the length, so this indexes
+            // the folded path too. The last occurrence ends furthest right,
+            // so it reaches the name if any occurrence does.
+            final segments = node.path.segments;
+            final nameStart = segments.isEmpty
+                ? 0
+                : fullPath.length - segments.last.length;
+            hit = index >= 0 && index + segment.length >= nameStart;
+          }
+        case _PathTerm():
+          final fullPath = path ??= node.path.toString();
+          if (caseSensitive) {
+            hit = fullPath.contains(term.text);
+          } else {
+            if (pathAscii < 0) pathAscii = _isAscii(fullPath) ? 1 : 0;
+            hit = pathAscii == 1
+                ? _indexOfAscii(fullPath, term.text) >= 0
+                : (foldedPath ??= _fold(fullPath)).contains(term.text);
+          }
+        case _GlobTerm():
+          if (nameAscii < 0) nameAscii = _isAscii(name) ? 1 : 0;
+          if (nameAscii == 1) {
+            hit = _globMatchesAscii(
+              term.pattern,
+              name,
+              0,
+              foldCase: !caseSensitive,
+            );
+          } else {
+            final subject = caseSensitive ? name : (foldedName ??= _fold(name));
+            hit = _globMatches(term.pattern, subject.runes.toList());
+          }
+          final segments = term.segmentPattern;
+          if (!hit && segments != null) {
+            final fullPath = path ??= node.path.toString();
+            final start = _tailStart(fullPath, term.segmentCount);
+            if (pathAscii < 0) pathAscii = _isAscii(fullPath) ? 1 : 0;
+            if (pathAscii == 1) {
+              hit = _globMatchesAscii(
+                segments,
+                fullPath,
+                start,
+                foldCase: !caseSensitive,
+              );
+            } else {
+              final subject = caseSensitive
+                  ? fullPath
+                  : (foldedPath ??= _fold(fullPath));
+              hit = _globMatches(
+                segments,
+                subject.substring(start).runes.toList(),
+              );
+            }
+          }
+      }
+      if (hit == term.negated) return false;
     }
     return true;
   }
@@ -257,59 +380,22 @@ final class TreeQuery extends TreeFilter {
 // Terms
 // ---------------------------------------------------------------------------
 
-/// The parts of a node that terms look at, computed lazily once per
-/// [TreeQuery.matches] call so several terms share the work.
-final class _Subject {
-  _Subject(this.node, {required this.caseSensitive});
-
-  final TreeNode<Object?> node;
-  final bool caseSensitive;
-
-  /// The name, folded unless [caseSensitive].
-  late final String name = caseSensitive ? node.name : _fold(node.name);
-
-  /// [name] as runes, for globs, where `?` stands for one character.
-  late final List<int> nameRunes = name.runes.toList(growable: false);
-
-  /// The name, always folded, for `ext:` terms.
-  late final String foldedName = caseSensitive ? _fold(node.name) : name;
-
-  /// The canonical path string, folded unless [caseSensitive].
-  late final String path = caseSensitive
-      ? node.path.toString()
-      : _fold(node.path.toString());
-
-  /// Where the node's own name starts in [path]: the canonical string ends
-  /// with the last segment, and a path root is all name. Folding keeps the
-  /// length, so this indexes the folded [path] too.
-  late final int nameStart = node.path.segments.isEmpty
-      ? 0
-      : path.length - node.path.segments.last.length;
-
-  /// The last [count] `/`-separated components of [path] as runes, or all of
-  /// [path] when it has fewer components. Runs in O(path length).
-  List<int> tailRunes(int count) {
-    var start = 0;
-    var seen = 0;
-    for (var i = path.length - 1; i >= 0; i--) {
-      if (path.codeUnitAt(i) == _slash && ++seen == count) {
-        start = i + 1;
-        break;
-      }
-    }
-    return path.substring(start).runes.toList(growable: false);
-  }
-}
-
+/// One parsed term. [TreeQuery.matches] evaluates each kind inline (a
+/// `switch` over this sealed class) so the per-node facts it shares between
+/// terms can stay in local variables.
 sealed class _Term {
   _Term({required this.negated});
 
+  /// The highest [cost].
+  static const int maxCost = 4;
+
   /// Whether the term was written with a leading `!`. [TreeQuery.matches]
-  /// inverts [test] for negated terms.
+  /// inverts the term's result for negated terms.
   final bool negated;
 
-  /// Whether the node matches the term, ignoring [negated].
-  bool test(_Subject subject);
+  /// The evaluation rank: [TreeQuery.parse] orders terms by it, cheapest
+  /// first (0 = a kind check, up to [maxCost] = a glob).
+  int get cost;
 }
 
 /// A plain term or quoted phrase: the name contains [text], or, for a term
@@ -332,15 +418,7 @@ final class _TextTerm extends _Term {
   }
 
   @override
-  bool test(_Subject subject) {
-    if (subject.name.contains(text)) return true;
-    final segment = segmentText;
-    if (segment == null) return false;
-    // The last occurrence ends furthest right, so it is the only one that
-    // needs checking: it reaches the name if any occurrence does.
-    final index = subject.path.lastIndexOf(segment);
-    return index >= 0 && index + segment.length >= subject.nameStart;
-  }
+  int get cost => segmentText == null ? 2 : 3;
 }
 
 /// A plain term containing `*` or `?`: the whole name matches the glob, or,
@@ -366,12 +444,7 @@ final class _GlobTerm extends _Term {
   final int segmentCount;
 
   @override
-  bool test(_Subject subject) {
-    if (_globMatches(pattern, subject.nameRunes)) return true;
-    final segments = segmentPattern;
-    return segments != null &&
-        _globMatches(segments, subject.tailRunes(segmentCount));
-  }
+  int get cost => 4;
 }
 
 /// `ext:a,b`: a file whose folded name ends with one of [suffixes] and has
@@ -383,14 +456,7 @@ final class _ExtTerm extends _Term {
   final List<String> suffixes;
 
   @override
-  bool test(_Subject subject) {
-    if (!subject.node.isFile) return false;
-    final name = subject.foldedName;
-    for (final suffix in suffixes) {
-      if (name.length > suffix.length && name.endsWith(suffix)) return true;
-    }
-    return false;
-  }
+  int get cost => 1;
 }
 
 /// `type:file` or `type:dir`.
@@ -400,7 +466,7 @@ final class _TypeTerm extends _Term {
   final bool directory;
 
   @override
-  bool test(_Subject subject) => subject.node.isDirectory == directory;
+  int get cost => 0;
 }
 
 /// `path:value`: the canonical path string contains [text].
@@ -411,7 +477,7 @@ final class _PathTerm extends _Term {
   final String text;
 
   @override
-  bool test(_Subject subject) => subject.path.contains(text);
+  int get cost => 3;
 }
 
 // ---------------------------------------------------------------------------
@@ -630,6 +696,162 @@ bool _globMatches(List<int> pattern, List<int> name) {
     if (p < pattern.length &&
         pattern[p] != _star &&
         (pattern[p] == _question || pattern[p] == name[n])) {
+      p++;
+      n++;
+    } else if (p < pattern.length && pattern[p] == _star) {
+      star = p;
+      p++;
+      resume = n;
+    } else if (star >= 0) {
+      p = star + 1;
+      resume++;
+      n = resume;
+    } else {
+      return false;
+    }
+  }
+  while (p < pattern.length && pattern[p] == _star) {
+    p++;
+  }
+  return p == pattern.length;
+}
+
+/// Whether every code unit of [text] is ASCII (below 0x80).
+bool _isAscii(String text) {
+  for (var i = 0; i < text.length; i++) {
+    if (text.codeUnitAt(i) > 0x7F) return false;
+  }
+  return true;
+}
+
+/// [unit] with `A`-`Z` lowercased; what [_fold] does to an ASCII unit.
+int _lowerAscii(int unit) => unit >= 0x41 && unit <= 0x5A ? unit + 0x20 : unit;
+
+/// Returned by [_indexOfAscii] when the searched text is not all ASCII.
+const int _notAscii = -2;
+
+/// The first index at which `_fold(text)` contains [needle], found by
+/// lowercasing `A`-`Z` while comparing instead of copying [text].
+///
+/// Returns -1 when there is no occurrence and [text] is all ASCII, and
+/// [_notAscii] as soon as it meets a non-ASCII unit before finding one (a
+/// non-ASCII character can fold to ASCII, such as the Kelvin sign to `k`,
+/// so the caller must then search `_fold(text)`). Units scanned before an
+/// occurrence are all ASCII, and [_fold] maps each character on its own
+/// without changing lengths, so an occurrence found here is an occurrence
+/// in `_fold(text)` at the same index. [needle] is already folded and is
+/// not empty. Runs in O(text length x needle length) in the worst case.
+int _indexOfAscii(String text, String needle) {
+  final length = text.length;
+  final last = length - needle.length;
+  final first = needle.codeUnitAt(0);
+  for (var i = 0; i < length; i++) {
+    final unit = text.codeUnitAt(i);
+    if (unit > 0x7F) return _notAscii;
+    if (i > last || _lowerAscii(unit) != first) continue;
+    var j = 1;
+    while (j < needle.length) {
+      final other = text.codeUnitAt(i + j);
+      if (other > 0x7F) return _notAscii;
+      if (_lowerAscii(other) != needle.codeUnitAt(j)) break;
+      j++;
+    }
+    if (j == needle.length) return i;
+  }
+  return -1;
+}
+
+/// The first index of [needle] in [text], or -1; [String.indexOf] without
+/// its generic pattern dispatch, which is the hot path of case-sensitive
+/// name terms. [needle] is not empty.
+int _indexOf(String text, String needle) {
+  final last = text.length - needle.length;
+  final first = needle.codeUnitAt(0);
+  outer:
+  for (var i = 0; i <= last; i++) {
+    if (text.codeUnitAt(i) != first) continue;
+    for (var j = 1; j < needle.length; j++) {
+      if (text.codeUnitAt(i + j) != needle.codeUnitAt(j)) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+
+/// Like [_indexOfAscii] but returns the last index.
+int _lastIndexOfAscii(String text, String needle) {
+  final last = text.length - needle.length;
+  if (needle.isEmpty) return text.length;
+  final first = needle.codeUnitAt(0);
+  outer:
+  for (var i = last; i >= 0; i--) {
+    if (_lowerAscii(text.codeUnitAt(i)) != first) continue;
+    for (var j = 1; j < needle.length; j++) {
+      if (_lowerAscii(text.codeUnitAt(i + j)) != needle.codeUnitAt(j)) {
+        continue outer;
+      }
+    }
+    return i;
+  }
+  return -1;
+}
+
+/// Whether the folded [name] is longer than, and ends with, any of
+/// [suffixes] (the `ext:` rule).
+bool _endsWithAny(String name, List<String> suffixes) {
+  for (final suffix in suffixes) {
+    if (name.length > suffix.length && name.endsWith(suffix)) return true;
+  }
+  return false;
+}
+
+/// [_endsWithAny] for an ASCII [name] that is not folded yet.
+bool _endsWithAnyAscii(String name, List<String> suffixes) {
+  outer:
+  for (final suffix in suffixes) {
+    final offset = name.length - suffix.length;
+    if (offset <= 0) continue;
+    for (var j = 0; j < suffix.length; j++) {
+      if (_lowerAscii(name.codeUnitAt(offset + j)) != suffix.codeUnitAt(j)) {
+        continue outer;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+/// Where the last [count] `/`-separated components of [path] start, or 0
+/// when [path] has fewer components. Runs in O(path length).
+int _tailStart(String path, int count) {
+  var seen = 0;
+  for (var i = path.length - 1; i >= 0; i--) {
+    if (path.codeUnitAt(i) == _slash && ++seen == count) return i + 1;
+  }
+  return 0;
+}
+
+/// [_globMatches] against `text.substring(start)` for an ASCII [text],
+/// without copying it: in ASCII every code unit is one rune, and with
+/// [foldCase] each unit is lowercased while comparing.
+bool _globMatchesAscii(
+  List<int> pattern,
+  String text,
+  int start, {
+  required bool foldCase,
+}) {
+  var p = 0;
+  var n = start;
+  var star = -1;
+  var resume = start;
+  final end = text.length;
+  while (n < end) {
+    final unit = foldCase
+        ? _lowerAscii(text.codeUnitAt(n))
+        : text.codeUnitAt(n);
+    if (p < pattern.length &&
+        pattern[p] != _star &&
+        (pattern[p] == _question || pattern[p] == unit)) {
       p++;
       n++;
     } else if (p < pattern.length && pattern[p] == _star) {

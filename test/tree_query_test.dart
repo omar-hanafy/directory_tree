@@ -754,6 +754,192 @@ void main() {
     }, timeout: const Timeout(Duration(seconds: 30)));
   });
 
+  group('optimized matcher', () {
+    // Letters chosen to hit every fold path: ASCII of both cases, Latin-1,
+    // the Kelvin sign (folds to ASCII 'k'), dotted capital I (kept because
+    // its lowercase is longer), Greek sigmas, an astral emoji, and the
+    // characters around A-Z.
+    const letters = [
+      'a', 'A', 'b', 'B', 'k', 'K', '\u212A', 'i', 'I', 'İ', //
+      'ä', 'Ä', 'σ', 'Σ', 'ς', 'ß', //
+      '\u{1F600}', '_', '-', '.', 'x', 'X', ' ', //
+      // The edges of the A-Z fold range.
+      '@', 'Z', '[', '`', 'z', '{',
+    ];
+    String word(Random random, int maxLength) {
+      final buffer = StringBuffer();
+      for (var i = 1 + random.nextInt(maxLength); i > 0; i--) {
+        buffer.write(letters[random.nextInt(letters.length)]);
+      }
+      return buffer.toString();
+    }
+
+    DirectoryTree<Never> randomTree(Random random) {
+      final windows = random.nextInt(4) == 0;
+      final separator = windows ? r'\' : '/';
+      final entries = <TreeEntry<Never>>[
+        for (var e = 1 + random.nextInt(10); e > 0; e--)
+          (random.nextInt(4) == 0
+              ? TreeEntry<Never>.directory
+              : TreeEntry<Never>.file)(
+            '${windows ? 'C:' : ''}$separator'
+            '${[for (var d = 1 + random.nextInt(4); d > 0; d--) word(random, 6)].join(separator)}',
+          ),
+      ];
+      return DirectoryTree<Never>.build(
+        entries,
+        options: TreeOptions(
+          paths: random.nextBool()
+              ? const PathPolicy()
+              : PathPolicy.caseInsensitive,
+        ),
+      );
+    }
+
+    String randomQuery(Random random) {
+      const pieces = [
+        'ext:', 'EXT:', 'type:f', 'type:dir', 'path:', '!', '"', '*', '?', //
+        '/', r'\', ',', '.', ' ', '\t', '**', ':',
+      ];
+      final buffer = StringBuffer();
+      for (var i = 1 + random.nextInt(6); i > 0; i--) {
+        if (random.nextInt(3) == 0) {
+          buffer.write(pieces[random.nextInt(pieces.length)]);
+        } else {
+          buffer.write(word(random, 4));
+        }
+        if (random.nextInt(3) == 0) buffer.write(' ');
+      }
+      return buffer.toString();
+    }
+
+    test('agrees with the previous implementation on random input', () {
+      final random = Random(515);
+      var compared = 0;
+      var matched = 0;
+      for (var round = 0; round < 400; round++) {
+        final tree = randomTree(random);
+        for (var q = 0; q < 25; q++) {
+          final source = randomQuery(random);
+          for (final caseSensitive in [false, true]) {
+            final query = TreeQuery.parse(source, caseSensitive: caseSensitive);
+            final oracle = OldTreeQuery.parse(
+              source,
+              caseSensitive: caseSensitive,
+            );
+            expect(query.matchesAll, oracle.matchesAll, reason: source);
+            for (final node in tree.nodes) {
+              final expected = oracle.matches(node);
+              expect(
+                query.matches(node),
+                expected,
+                reason:
+                    '${_show(source)} on ${node.path} '
+                    '(caseSensitive: $caseSensitive)',
+              );
+              compared++;
+              if (expected) matched++;
+            }
+            final label = tree.nodes.isEmpty ? source : tree.nodes.last.label;
+            expect(
+              query.matchRanges(label),
+              oracle.matchRanges(label),
+              reason: source,
+            );
+          }
+        }
+      }
+      // Guard against a generator that only ever produces misses.
+      expect(compared, greaterThan(50000));
+      expect(matched, greaterThan(compared ~/ 50));
+    });
+
+    test('agrees on terms built from the node names themselves', () {
+      final random = Random(616);
+      for (var round = 0; round < 300; round++) {
+        final tree = randomTree(random);
+        final nodes = tree.nodes;
+        if (nodes.isEmpty) continue;
+        for (var q = 0; q < 10; q++) {
+          // A slice of a real path, so plain, path, and glob terms hit.
+          final path = nodes[random.nextInt(nodes.length)].path.toString();
+          final from = random.nextInt(path.length);
+          final to = from + 1 + random.nextInt(path.length - from);
+          var term = path.substring(from, to).replaceAll(' ', '?');
+          if (random.nextInt(3) == 0) term = '*$term';
+          if (random.nextInt(4) == 0) term = term.toUpperCase();
+          if (random.nextInt(5) == 0) term = '!$term';
+          if (random.nextInt(5) == 0) term = 'path:$term';
+          for (final caseSensitive in [false, true]) {
+            final query = TreeQuery.parse(term, caseSensitive: caseSensitive);
+            final oracle = OldTreeQuery.parse(
+              term,
+              caseSensitive: caseSensitive,
+            );
+            for (final node in nodes) {
+              expect(
+                query.matches(node),
+                oracle.matches(node),
+                reason:
+                    '${_show(term)} on ${node.path} '
+                    '(caseSensitive: $caseSensitive)',
+              );
+            }
+          }
+        }
+      }
+    });
+
+    test('tests cheap terms first without changing results', () {
+      // A counting filter cannot observe TreeQuery's own term order, so
+      // check that reordering terms never changes a result instead.
+      final random = Random(717);
+      for (var round = 0; round < 200; round++) {
+        final tree = randomTree(random);
+        final terms = [
+          for (var i = 2 + random.nextInt(3); i > 0; i--)
+            randomQuery(random).trim(),
+        ]..removeWhere((term) => term.isEmpty);
+        final forward = TreeQuery.parse(terms.join(' '));
+        final backward = TreeQuery.parse(terms.reversed.join(' '));
+        for (final node in tree.nodes) {
+          expect(
+            forward.matches(node),
+            backward.matches(node),
+            reason: '$terms',
+          );
+        }
+      }
+    });
+
+    test('the Kelvin sign folds to k in names and paths', () {
+      final kelvin = DirectoryTree<Never>.build(const [
+        TreeEntry.file('/r/\u212Aelvin/\u212Ab.txt'),
+        TreeEntry.file('/r/plain/kb.txt'),
+      ]);
+      Set<String> paths(String source, {bool caseSensitive = false}) {
+        final query = TreeQuery.parse(source, caseSensitive: caseSensitive);
+        return {
+          for (final node in kelvin.nodes)
+            if (query.matches(node)) node.path.toString(),
+        };
+      }
+
+      expect(paths('kb'), {'/r/\u212Aelvin/\u212Ab.txt', '/r/plain/kb.txt'});
+      expect(paths('kb', caseSensitive: true), {'/r/plain/kb.txt'});
+      expect(paths('kelvin/k'), {'/r/\u212Aelvin/\u212Ab.txt'});
+      expect(paths('k?.txt'), {
+        '/r/\u212Aelvin/\u212Ab.txt',
+        '/r/plain/kb.txt',
+      });
+      expect(paths('kelvin/*.txt'), {'/r/\u212Aelvin/\u212Ab.txt'});
+      expect(paths('path:/kelvin'), {
+        '/r/\u212Aelvin',
+        '/r/\u212Aelvin/\u212Ab.txt',
+      });
+    });
+  });
+
   group('value semantics', () {
     test('equality and hashCode use source and caseSensitive', () {
       final a = TreeQuery.parse('ext:dart main');
@@ -861,3 +1047,494 @@ bool _oracle(
 
 String _show(String text) =>
     "'${text.replaceAll('\t', r'\t').replaceAll('\n', r'\n').replaceAll('\r', r'\r')}'";
+
+// ---------------------------------------------------------------------------
+// Oracle: TreeQuery as of commit 25f9c0d, before matches became
+// allocation-free. Copied verbatim except for the class name, imports, and
+// doc comments; the property test above checks the optimized matcher
+// against it.
+// ---------------------------------------------------------------------------
+
+final class OldTreeQuery extends TreeFilter {
+  OldTreeQuery._(
+    this.source,
+    this.caseSensitive,
+    this._terms,
+    this._highlights,
+  );
+
+  factory OldTreeQuery.parse(String query, {bool caseSensitive = false}) {
+    final terms = _Parser(query, caseSensitive: caseSensitive).parse();
+    final highlights = <String>[
+      for (final term in terms)
+        if (!term.negated && term is _TextTerm) ...term.highlights,
+    ];
+    return OldTreeQuery._(
+      query,
+      caseSensitive,
+      List<_Term>.unmodifiable(terms),
+      List<String>.unmodifiable(highlights),
+    );
+  }
+
+  final String source;
+
+  final bool caseSensitive;
+
+  final List<_Term> _terms;
+
+  final List<String> _highlights;
+
+  @override
+  bool get matchesAll => _terms.isEmpty;
+
+  @override
+  bool matches(TreeNode<Object?> node) {
+    if (_terms.isEmpty) return true;
+    final subject = _Subject(node, caseSensitive: caseSensitive);
+    for (final term in _terms) {
+      if (term.test(subject) == term.negated) return false;
+    }
+    return true;
+  }
+
+  List<({int start, int end})> matchRanges(String text) {
+    if (_highlights.isEmpty || text.isEmpty) {
+      return const <({int start, int end})>[];
+    }
+    final haystack = caseSensitive ? text : _fold(text);
+    final found = <({int start, int end})>[];
+    for (final needle in _highlights) {
+      var index = haystack.indexOf(needle);
+      while (index >= 0) {
+        found.add((start: index, end: index + needle.length));
+        index = haystack.indexOf(needle, index + 1);
+      }
+    }
+    if (found.isEmpty) return const <({int start, int end})>[];
+    found.sort((a, b) {
+      final byStart = a.start.compareTo(b.start);
+      return byStart != 0 ? byStart : a.end.compareTo(b.end);
+    });
+    final merged = <({int start, int end})>[];
+    var start = found.first.start;
+    var end = found.first.end;
+    for (var i = 1; i < found.length; i++) {
+      final range = found[i];
+      if (range.start <= end) {
+        if (range.end > end) end = range.end;
+      } else {
+        merged.add((start: start, end: end));
+        start = range.start;
+        end = range.end;
+      }
+    }
+    merged.add((start: start, end: end));
+    return List<({int start, int end})>.unmodifiable(merged);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OldTreeQuery &&
+          other.source == source &&
+          other.caseSensitive == caseSensitive;
+
+  @override
+  int get hashCode => Object.hash(OldTreeQuery, source, caseSensitive);
+
+  @override
+  String toString() => caseSensitive
+      ? "OldTreeQuery('$source', caseSensitive)"
+      : "OldTreeQuery('$source')";
+}
+
+// ---------------------------------------------------------------------------
+// Terms
+// ---------------------------------------------------------------------------
+
+final class _Subject {
+  _Subject(this.node, {required this.caseSensitive});
+
+  final TreeNode<Object?> node;
+  final bool caseSensitive;
+
+  late final String name = caseSensitive ? node.name : _fold(node.name);
+
+  late final List<int> nameRunes = name.runes.toList(growable: false);
+
+  late final String foldedName = caseSensitive ? _fold(node.name) : name;
+
+  late final String path = caseSensitive
+      ? node.path.toString()
+      : _fold(node.path.toString());
+
+  late final int nameStart = node.path.segments.isEmpty
+      ? 0
+      : path.length - node.path.segments.last.length;
+
+  List<int> tailRunes(int count) {
+    var start = 0;
+    var seen = 0;
+    for (var i = path.length - 1; i >= 0; i--) {
+      if (path.codeUnitAt(i) == _slash && ++seen == count) {
+        start = i + 1;
+        break;
+      }
+    }
+    return path.substring(start).runes.toList(growable: false);
+  }
+}
+
+sealed class _Term {
+  _Term({required this.negated});
+
+  final bool negated;
+
+  bool test(_Subject subject);
+}
+
+final class _TextTerm extends _Term {
+  _TextTerm(this.text, this.segmentText, {required super.negated});
+
+  final String text;
+
+  final String? segmentText;
+
+  List<String> get highlights {
+    final segment = segmentText;
+    return segment == null || segment == text ? [text] : [text, segment];
+  }
+
+  @override
+  bool test(_Subject subject) {
+    if (subject.name.contains(text)) return true;
+    final segment = segmentText;
+    if (segment == null) return false;
+    // The last occurrence ends furthest right, so it is the only one that
+    // needs checking: it reaches the name if any occurrence does.
+    final index = subject.path.lastIndexOf(segment);
+    return index >= 0 && index + segment.length >= subject.nameStart;
+  }
+}
+
+final class _GlobTerm extends _Term {
+  _GlobTerm(
+    this.pattern,
+    this.segmentPattern,
+    this.segmentCount, {
+    required super.negated,
+  });
+
+  final List<int> pattern;
+
+  final List<int>? segmentPattern;
+
+  final int segmentCount;
+
+  @override
+  bool test(_Subject subject) {
+    if (_globMatches(pattern, subject.nameRunes)) return true;
+    final segments = segmentPattern;
+    return segments != null &&
+        _globMatches(segments, subject.tailRunes(segmentCount));
+  }
+}
+
+final class _ExtTerm extends _Term {
+  _ExtTerm(this.suffixes, {required super.negated});
+
+  final List<String> suffixes;
+
+  @override
+  bool test(_Subject subject) {
+    if (!subject.node.isFile) return false;
+    final name = subject.foldedName;
+    for (final suffix in suffixes) {
+      if (name.length > suffix.length && name.endsWith(suffix)) return true;
+    }
+    return false;
+  }
+}
+
+final class _TypeTerm extends _Term {
+  _TypeTerm({required super.negated, required this.directory});
+
+  final bool directory;
+
+  @override
+  bool test(_Subject subject) => subject.node.isDirectory == directory;
+}
+
+final class _PathTerm extends _Term {
+  _PathTerm(this.text, {required super.negated});
+
+  final String text;
+
+  @override
+  bool test(_Subject subject) => subject.path.contains(text);
+}
+
+// ---------------------------------------------------------------------------
+// Parser
+// ---------------------------------------------------------------------------
+
+const int _quote = 0x22; // "
+const int _bang = 0x21; // !
+const int _colon = 0x3A; // :
+const int _star = 0x2A; // *
+const int _question = 0x3F; // ?
+const int _slash = 0x2F; // /
+
+final class _Parser {
+  _Parser(this.source, {required this.caseSensitive});
+
+  final String source;
+  final bool caseSensitive;
+  final List<_Term> terms = <_Term>[];
+  int index = 0;
+
+  List<_Term> parse() {
+    final length = source.length;
+    while (true) {
+      while (index < length && _isWhitespace(source.codeUnitAt(index))) {
+        index++;
+      }
+      if (index >= length) break;
+      _parseTerm();
+    }
+    return terms;
+  }
+
+  void _parseTerm() {
+    final length = source.length;
+    var negated = false;
+    if (source.codeUnitAt(index) == _bang &&
+        index + 1 < length &&
+        !_isWhitespace(source.codeUnitAt(index + 1))) {
+      negated = true;
+      index++;
+    }
+    if (source.codeUnitAt(index) == _quote) {
+      final phrase = _readQuoted();
+      if (phrase.isNotEmpty) terms.add(_textTerm(phrase, negated: negated));
+      return;
+    }
+    // A bare word runs to the next whitespace. Quotes inside it are literal,
+    // except right after a known key. Only the first colon can end a key.
+    final start = index;
+    var sawColon = false;
+    while (index < length && !_isWhitespace(source.codeUnitAt(index))) {
+      if (!sawColon && source.codeUnitAt(index) == _colon) {
+        sawColon = true;
+        final key = _keyOf(source.substring(start, index));
+        if (key != null) {
+          index++;
+          _parseKeyValue(key, start, negated: negated);
+          return;
+        }
+      }
+      index++;
+    }
+    _addPlain(source.substring(start, index), negated: negated);
+  }
+
+  void _parseKeyValue(String key, int start, {required bool negated}) {
+    final length = source.length;
+    String value;
+    if (index < length && source.codeUnitAt(index) == _quote) {
+      value = _readQuoted();
+    } else {
+      final valueStart = index;
+      while (index < length && !_isWhitespace(source.codeUnitAt(index))) {
+        index++;
+      }
+      value = source.substring(valueStart, index);
+    }
+    final term = _keyTerm(key, value, negated: negated);
+    if (term != null) {
+      terms.add(term);
+    } else {
+      // Not a usable key term: the whole spelling, quotes included, is
+      // searched for literally.
+      _addPlain(source.substring(start, index), negated: negated);
+    }
+  }
+
+  String _readQuoted() {
+    final contentStart = index + 1;
+    final close = source.indexOf('"', contentStart);
+    if (close < 0) {
+      index = source.length;
+      return source.substring(contentStart);
+    }
+    index = close + 1;
+    return source.substring(contentStart, close);
+  }
+
+  void _addPlain(String text, {required bool negated}) {
+    // Callers only pass non-empty words, but stay defensive.
+    if (text.isEmpty) return;
+    if (!text.contains('*') && !text.contains('?')) {
+      terms.add(_textTerm(text, negated: negated));
+      return;
+    }
+    final folded = _caseFold(text);
+    List<int>? segmentPattern;
+    var segmentCount = 0;
+    if (_hasSeparator(folded)) {
+      final normalized = folded.replaceAll(r'\', '/');
+      segmentPattern = _compileGlob(normalized);
+      segmentCount = '/'.allMatches(normalized).length + 1;
+    }
+    terms.add(
+      _GlobTerm(
+        _compileGlob(folded),
+        segmentPattern,
+        segmentCount,
+        negated: negated,
+      ),
+    );
+  }
+
+  _TextTerm _textTerm(String text, {required bool negated}) {
+    final folded = _caseFold(text);
+    return _TextTerm(
+      folded,
+      _hasSeparator(folded) ? folded.replaceAll(r'\', '/') : null,
+      negated: negated,
+    );
+  }
+
+  static bool _hasSeparator(String text) =>
+      text.contains('/') || text.contains(r'\');
+
+  _Term? _keyTerm(String key, String value, {required bool negated}) {
+    if (value.isEmpty) return null;
+    switch (key) {
+      case 'ext':
+        final suffixes = <String>[];
+        for (var part in value.split(',')) {
+          if (part.startsWith('.')) part = part.substring(1);
+          if (part.isEmpty) continue;
+          final suffix = '.${_fold(part)}';
+          if (!suffixes.contains(suffix)) suffixes.add(suffix);
+        }
+        if (suffixes.isEmpty) return null;
+        return _ExtTerm(List<String>.unmodifiable(suffixes), negated: negated);
+      case 'type':
+        switch (_fold(value)) {
+          case 'file':
+          case 'f':
+            return _TypeTerm(negated: negated, directory: false);
+          case 'dir':
+          case 'directory':
+          case 'd':
+            return _TypeTerm(negated: negated, directory: true);
+        }
+        return null;
+      case 'path':
+        return _PathTerm(
+          _caseFold(value.replaceAll(r'\', '/')),
+          negated: negated,
+        );
+    }
+    return null;
+  }
+
+  String _caseFold(String text) => caseSensitive ? text : _fold(text);
+
+  static String? _keyOf(String word) {
+    if (word.length > 4) return null;
+    switch (_fold(word)) {
+      case 'ext':
+        return 'ext';
+      case 'type':
+        return 'type';
+      case 'path':
+        return 'path';
+    }
+    return null;
+  }
+}
+
+List<int> _compileGlob(String glob) {
+  final pattern = <int>[];
+  for (final rune in glob.runes) {
+    if (rune == _star && pattern.isNotEmpty && pattern.last == _star) continue;
+    pattern.add(rune);
+  }
+  return List<int>.unmodifiable(pattern);
+}
+
+bool _globMatches(List<int> pattern, List<int> name) {
+  var p = 0;
+  var n = 0;
+  var star = -1;
+  var resume = 0;
+  while (n < name.length) {
+    if (p < pattern.length &&
+        pattern[p] != _star &&
+        (pattern[p] == _question || pattern[p] == name[n])) {
+      p++;
+      n++;
+    } else if (p < pattern.length && pattern[p] == _star) {
+      star = p;
+      p++;
+      resume = n;
+    } else if (star >= 0) {
+      p = star + 1;
+      resume++;
+      n = resume;
+    } else {
+      return false;
+    }
+  }
+  while (p < pattern.length && pattern[p] == _star) {
+    p++;
+  }
+  return p == pattern.length;
+}
+
+String _fold(String text) {
+  var ascii = true;
+  for (var i = 0; i < text.length; i++) {
+    if (text.codeUnitAt(i) > 0x7F) {
+      ascii = false;
+      break;
+    }
+  }
+  if (ascii) return text.toLowerCase();
+  final buffer = StringBuffer();
+  for (final rune in text.runes) {
+    if (rune < 0x80) {
+      buffer.writeCharCode(rune >= 0x41 && rune <= 0x5A ? rune + 0x20 : rune);
+      continue;
+    }
+    if (rune == 0x3C2) {
+      buffer.writeCharCode(0x3C3);
+      continue;
+    }
+    final char = String.fromCharCode(rune);
+    final lower = char.toLowerCase();
+    buffer.write(lower.length == char.length ? lower : char);
+  }
+  return buffer.toString();
+}
+
+bool _isWhitespace(int unit) {
+  if (unit <= 0x20) {
+    return unit == 0x20 || (unit >= 0x09 && unit <= 0x0D);
+  }
+  if (unit < 0x85) return false;
+  return unit == 0x85 ||
+      unit == 0xA0 ||
+      unit == 0x1680 ||
+      (unit >= 0x2000 && unit <= 0x200A) ||
+      unit == 0x2028 ||
+      unit == 0x2029 ||
+      unit == 0x202F ||
+      unit == 0x205F ||
+      unit == 0x3000 ||
+      unit == 0xFEFF;
+}
