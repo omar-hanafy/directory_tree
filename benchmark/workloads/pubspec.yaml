@@ -1,0 +1,10 @@
+name: directory_tree_bench_workloads
+description: Deterministic, seeded path workloads for the directory_tree benchmarks.
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.28.0
