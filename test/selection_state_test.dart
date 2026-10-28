@@ -330,6 +330,64 @@ void main() {
     });
   });
 
+  group('withAnchor', () {
+    for (final mode in SelectionMode.values) {
+      test('replaces only the anchor ($mode)', () {
+        final state = SelectionState(
+          mode: mode,
+          selected: ids(['/a']),
+          anchor: id('/a'),
+        );
+        final moved = state.withAnchor(id('/b'));
+        expect(moved.anchor, id('/b'));
+        expect(moved.mode, mode);
+        expect(moved.selected, idSet(['/a']));
+        expect(moved.isSelected(id('/b')), isFalse);
+        expect(
+          moved,
+          SelectionState(mode: mode, selected: ids(['/a']), anchor: id('/b')),
+        );
+        final removed = state.withAnchor(null);
+        expect(removed.anchor, isNull);
+        expect(removed.selected, idSet(['/a']));
+      });
+
+      test('returns the same state when unchanged ($mode)', () {
+        final state = SelectionState(mode: mode, anchor: id('/a'));
+        expect(identical(state.withAnchor(id('/a')), state), isTrue);
+        final empty = SelectionState.empty(mode: mode);
+        expect(identical(empty.withAnchor(null), empty), isTrue);
+      });
+    }
+
+    test('shares the selected set instead of copying it', () {
+      final state = SelectionState(
+        mode: multiple,
+        selected: ids(['/a', '/b', '/c']),
+      );
+      final moved = state.withAnchor(id('/b'));
+      expect(identical(moved.selected, state.selected), isTrue);
+      expect(moved.selected.toList(), ids(['/a', '/b', '/c']));
+      expect(() => moved.selected.add(id('/d')), throwsUnsupportedError);
+      const empty = SelectionState.empty(mode: multiple);
+      expect(
+        identical(empty.withAnchor(id('/a')).selected, empty.selected),
+        isTrue,
+      );
+    });
+
+    test('the new anchor pivots extendTo', () {
+      final order = ids(['/1', '/2', '/3', '/4']);
+      final state = const SelectionState.empty(
+        mode: multiple,
+      ).select(id('/1')).withAnchor(id('/3'));
+      expect(state.selected, idSet(['/1']));
+      final ranged = state.extendTo(id('/4'), order);
+      expect(ranged.selected, idSet(['/3', '/4']));
+      expect(ranged.anchor, id('/3'));
+    });
+  });
+
   group('withMode', () {
     test('same mode returns the same state', () {
       final state = SelectionState(mode: multiple, selected: ids(['/a']));
@@ -719,7 +777,7 @@ void main() {
           isA<StateError>().having(
             (error) => error.message,
             'message',
-            contains('single selection mode'),
+            allOf(contains('single selection mode'), contains('canCheck')),
           ),
         ),
       );
@@ -728,10 +786,37 @@ void main() {
       expect(identical(state.uncheck(tree, r), state), isTrue);
     });
 
+    test('canCheck: multiple mode allows every node of the tree', () {
+      for (final node in tree.nodes) {
+        expect(empty.canCheck(tree, node.id), isTrue, reason: '${node.id}');
+      }
+      expect(empty.addAll([x, c]).canCheck(tree, r), isTrue);
+      expect(empty.canCheck(tree, id('/nope')), isFalse);
+    });
+
+    test('canCheck: single mode allows subtrees with at most one leaf', () {
+      const state = SelectionState.empty();
+      for (final leaf in [x, y, b, c]) {
+        expect(state.canCheck(tree, leaf), isTrue, reason: '$leaf');
+        expect(state.check(tree, leaf).selected, {leaf});
+      }
+      expect(state.canCheck(tree, a), isFalse);
+      expect(state.canCheck(tree, r), isFalse);
+      expect(state.select(x).canCheck(tree, a), isFalse);
+      expect(state.canCheck(tree, id('/nope')), isFalse);
+      // Unknown ids are not checkable, though check treats them as a no-op.
+      expect(identical(state.check(tree, id('/nope')), state), isTrue);
+    });
+
     test('single mode: a directory with exactly one leaf can be checked', () {
       final oneLeaf = DirectoryTree.fromPaths(['/r/only/f.txt', '/r/g.txt']);
       final only = oneLeaf.nodeAt('/r/only')!.id;
       final f = oneLeaf.nodeAt('/r/only/f.txt')!.id;
+      expect(const SelectionState.empty().canCheck(oneLeaf, only), isTrue);
+      expect(
+        const SelectionState.empty().canCheck(oneLeaf, oneLeaf.roots.single),
+        isFalse,
+      );
       final state = const SelectionState.empty().check(oneLeaf, only);
       expect(state.selected, {f});
       expect(state.checkStateOf(oneLeaf, only), CheckState.checked);
@@ -803,6 +888,58 @@ void main() {
       }
       expect(multiRootTrees, greaterThan(50));
       expect(emptyDirectories, greaterThan(50));
+    });
+
+    test('canCheck matches the leaf count and predicts StateError', () {
+      var singleAllowed = 0;
+      var singleRefused = 0;
+      for (var seed = 0; seed < 300; seed++) {
+        final random = Random(2000 + seed);
+        final tree = randomTree(random);
+        final selected = randomSelection(random, tree);
+        final pick = selected.isEmpty ? null : selected.first;
+        final states = [
+          SelectionState(mode: multiple, selected: selected),
+          SelectionState(selected: [?pick]),
+        ];
+        for (final state in states) {
+          for (final node in tree.nodes) {
+            final reason = 'seed $seed ${state.mode} ${node.id}';
+            final leafCount = oracleLeaves(tree, node.id).length;
+            final expected = state.mode == multiple || leafCount <= 1;
+            final allowed = state.canCheck(tree, node.id);
+            expect(allowed, expected, reason: reason);
+            if (allowed) {
+              if (state.mode == single) singleAllowed++;
+              expect(
+                () => state.check(tree, node.id),
+                returnsNormally,
+                reason: reason,
+              );
+              expect(
+                () => state.toggleCheck(tree, node.id),
+                returnsNormally,
+                reason: reason,
+              );
+            } else {
+              singleRefused++;
+              expect(
+                () => state.check(tree, node.id),
+                throwsStateError,
+                reason: reason,
+              );
+              expect(
+                () => state.toggleCheck(tree, node.id),
+                throwsStateError,
+                reason: reason,
+              );
+            }
+          }
+          expect(state.canCheck(tree, id('/not/in/tree')), isFalse);
+        }
+      }
+      expect(singleAllowed, greaterThan(100));
+      expect(singleRefused, greaterThan(100));
     });
 
     test('check, uncheck, and toggleCheck on random trees', () {
@@ -892,6 +1029,18 @@ void main() {
       expect(checked.selected, {leaf, top});
       expect(checked.checkStateOf(tree, root), CheckState.checked);
       expect(checked.uncheck(tree, root).isEmpty, isTrue);
+    });
+
+    test('canCheck handles a 1000-deep chain', () {
+      const singleState = SelectionState.empty();
+      final root = tree.roots.single;
+      expect(singleState.canCheck(tree, root), isFalse);
+      expect(
+        singleState.canCheck(tree, tree.childrenOf(root).first.id),
+        isTrue,
+      );
+      expect(singleState.canCheck(tree, leaf), isTrue);
+      expect(empty.canCheck(tree, root), isTrue);
     });
   });
 }

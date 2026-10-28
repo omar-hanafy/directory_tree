@@ -159,6 +159,10 @@ final class SelectionState {
   SelectionState._(this.mode, Set<NodeId> selected, this.anchor)
     : _selected = UnmodifiableSetView<NodeId>(selected);
 
+  // Reuses another state's already unmodifiable [selected] set as is, so a
+  // change that keeps the selection (such as [withAnchor]) stays O(1).
+  const SelectionState._shared(this.mode, this._selected, this.anchor);
+
   /// Whether at most one id ([SelectionMode.single]) or any number of ids
   /// ([SelectionMode.multiple]) can be selected.
   ///
@@ -178,7 +182,8 @@ final class SelectionState {
   /// [select] and, in [SelectionMode.multiple], [toggle] move it to the
   /// clicked id; [extendTo], [addAll], [removeAll], [check], and [uncheck]
   /// keep it; [clear] removes it; [withMode] may move or remove it when
-  /// switching to [SelectionMode.single]. The anchor need not be selected.
+  /// switching to [SelectionMode.single]; [withAnchor] sets it directly. The
+  /// anchor need not be selected.
   final NodeId? anchor;
 
   /// Whether [id] is selected. O(1).
@@ -309,6 +314,19 @@ final class SelectionState {
     return SelectionState.empty(mode: mode);
   }
 
+  /// Replaces the [anchor] with [anchor], keeping the selection and [mode].
+  ///
+  /// Use it to move the range pivot without changing what is selected, for
+  /// example when keyboard focus moves before a shift-click or shift-arrow
+  /// extends the range with [extendTo]. The anchor need not be selected or in
+  /// any tree; `null` removes it. Returns this state when [anchor] is already
+  /// the anchor. O(1): the selected set is shared, not copied.
+  @useResult
+  SelectionState withAnchor(NodeId? anchor) {
+    if (anchor == this.anchor) return this;
+    return SelectionState._shared(mode, _selected, anchor);
+  }
+
   /// Switches to [mode].
   ///
   /// Switching to [SelectionMode.multiple] keeps the selection and anchor
@@ -433,6 +451,32 @@ final class SelectionState {
     return UnmodifiableMapView<NodeId, CheckState>(states);
   }
 
+  /// Whether [check] and [toggleCheck] may be called for [id] in the current
+  /// [mode] without throwing a [StateError].
+  ///
+  /// Use it to enable or disable a checkbox in the UI, and ask it before
+  /// calling [check] or [toggleCheck] in [SelectionMode.single]. In
+  /// [SelectionMode.multiple] every node of [tree] can be checked. In
+  /// [SelectionMode.single] only a node whose subtree holds at most one leaf
+  /// can be: a leaf itself, or a directory with exactly one leaf below it.
+  /// Returns `false` for ids not in [tree], even though [check] accepts
+  /// them as a no-op. [uncheck] is always allowed and needs no check.
+  ///
+  /// O(1) in multiple mode; O(subtree size) in single mode, stopping at the
+  /// second leaf.
+  bool canCheck(DirectoryTree<Object?> tree, NodeId id) {
+    final index = tree.indexOf(id);
+    if (index < 0) return false;
+    if (mode == SelectionMode.multiple) return true;
+    final nodes = tree.nodes;
+    final end = index + tree.subtreeSizeOf(id);
+    var leaves = 0;
+    for (var i = index; i < end; i++) {
+      if (_isLeaf(nodes[i]) && ++leaves > 1) return false;
+    }
+    return true;
+  }
+
   /// Selects every leaf in the subtree of [id] (just [id] when it is a
   /// leaf), keeping the [anchor].
   ///
@@ -443,7 +487,8 @@ final class SelectionState {
   /// O(length + subtree size).
   ///
   /// Throws a [StateError] in [SelectionMode.single] when the subtree has
-  /// more than one leaf, since a single selection cannot check it.
+  /// more than one leaf, since a single selection cannot check it; ask
+  /// [canCheck] first.
   @useResult
   SelectionState check(DirectoryTree<Object?> tree, NodeId id) {
     final leaves = _leavesOf(tree, id);
@@ -475,7 +520,7 @@ final class SelectionState {
   /// for ids not in [tree]. Runs in O(length + subtree size).
   ///
   /// Throws a [StateError] in [SelectionMode.single] when the subtree of
-  /// [id] has more than one leaf, as [check] does.
+  /// [id] has more than one leaf, as [check] does; ask [canCheck] first.
   @useResult
   SelectionState toggleCheck(DirectoryTree<Object?> tree, NodeId id) {
     final leaves = _leavesOf(tree, id);
@@ -549,6 +594,7 @@ final class SelectionState {
 
   static StateError _singleModeError(NodeId id, int leafCount) => StateError(
     'Cannot check ${id.value} in single selection mode: its subtree has '
-    '$leafCount leaves, and a single selection holds at most one.',
+    '$leafCount leaves, and a single selection holds at most one. '
+    'Call canCheck first to find out whether a node can be checked.',
   );
 }
