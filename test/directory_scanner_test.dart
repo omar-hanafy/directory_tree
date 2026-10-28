@@ -150,7 +150,12 @@ void main() {
     test('a deep chain is walked without recursion', () async {
       final chain = List.filled(200, 'd').join('/');
       create(base, ['$chain/leaf.txt']);
-      final result = await scanBoth(const DirectoryScanner(), base.path);
+      final errors = <FileSystemException>[];
+      final result = await scanBoth(
+        DirectoryScanner(onError: errors.add),
+        base.path,
+      );
+      expect(errors, isEmpty);
       expect(result, contains('f:$chain/leaf.txt:File'));
       expect(result, hasLength(all.length + 201));
     });
