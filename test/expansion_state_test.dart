@@ -17,7 +17,7 @@ import 'package:test/test.dart';
 /// /s
 ///   s.txt
 /// ```
-DirectoryTree<Never> sampleTree() => DirectoryTree.fromPaths([
+DirectoryTree<Object?> sampleTree() => DirectoryTree.fromPaths([
   '/r/a/b/deep.txt',
   '/r/a/a.txt',
   '/r/c/c.txt',

@@ -306,11 +306,22 @@ void main() {
         '/p/empty/',
         r'/p/win\',
       ]);
-      expect(tree, isA<DirectoryTree<Never>>());
+      expect(tree, isA<DirectoryTree<Object?>>());
       expect(tree.nodeAt('/p/file.txt')!.isFile, isTrue);
       expect(tree.nodeAt('/p/empty')!.isDirectory, isTrue);
       expect(tree.nodeAt('/p/empty')!.isExplicit, isTrue);
       expect(tree.nodeAt('/p/win')!.isDirectory, isTrue);
+    });
+
+    test('fromPaths trees accept data in later rebuilds', () {
+      // A DirectoryTree<Never> would be assignable to DirectoryTree<Object?>
+      // yet reject every non-null data value at runtime; Object? must not.
+      final DirectoryTree<Object?> tree = DirectoryTree.fromPaths(['/p/a.txt']);
+      expect(tree, isNot(isA<DirectoryTree<String>>()));
+      final next = tree.rebuild(
+        (builder) => builder.addFile('/p/b.txt', data: 42),
+      );
+      expect(next.nodeAt('/p/b.txt')!.data, 42);
     });
 
     test('fromPaths respects a policy where backslash is not a separator', () {

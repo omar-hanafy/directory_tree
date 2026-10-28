@@ -101,21 +101,27 @@ final class DirectoryTree<T> {
   /// separator (`/`, or `\` when [PathPolicy.backslashIsSeparator] is set),
   /// which becomes a directory entry. Use it for quick trees from lists such
   /// as `git ls-files` output.
-  static DirectoryTree<Never> fromPaths(
+  ///
+  /// The result is a `DirectoryTree<Object?>` whose nodes carry no data, so
+  /// later [rebuild] calls may add entries with any data. To build a typed
+  /// tree, use [DirectoryTree.build] with [TreeEntry.file] and
+  /// [TreeEntry.directory] values instead: a typed variable rejects this
+  /// result at compile time rather than failing when data is added later.
+  static DirectoryTree<Object?> fromPaths(
     Iterable<String> paths, {
     TreeOptions options = const TreeOptions(),
   }) {
     final backslash = options.paths.backslashIsSeparator;
-    return DirectoryTree<Never>.build([
+    return DirectoryTree<Object?>.build([
       for (final path in paths)
         if (path.isNotEmpty &&
             isPathSeparator(
               path.codeUnitAt(path.length - 1),
               backslashIsSeparator: backslash,
             ))
-          TreeEntry<Never>.directory(path)
+          TreeEntry<Object?>.directory(path)
         else
-          TreeEntry<Never>.file(path),
+          TreeEntry<Object?>.file(path),
     ], options: options);
   }
 

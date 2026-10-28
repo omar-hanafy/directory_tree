@@ -167,11 +167,25 @@ void main() {
 
     test('accepts trees whose data type is a subtype', () {
       final byNum = TreeOrder.by<num>((a, b) => 0);
-      final tree = DirectoryTree.fromPaths([
-        '/r/a',
-        '/r/b',
+      final tree = DirectoryTree<int>.build(const [
+        TreeEntry.file('/r/a', data: 1),
+        TreeEntry.file('/r/b', data: 2),
       ], options: TreeOptions(order: byNum));
       expect(tree.fileCount, 2);
+    });
+
+    test('rejects data-less fromPaths trees for a typed comparator', () {
+      // fromPaths builds DirectoryTree<Object?>, whose nodes are not
+      // TreeNode<num>, so a typed comparator fails loudly instead of
+      // silently comparing nodes without data.
+      final byNum = TreeOrder.by<num>((a, b) => 0);
+      expect(
+        () => DirectoryTree.fromPaths([
+          '/r/a',
+          '/r/b',
+        ], options: TreeOptions(order: byNum)),
+        throwsA(isA<TypeError>()),
+      );
     });
 
     test('each call returns a new function', () {
