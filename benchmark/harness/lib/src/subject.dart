@@ -4,13 +4,18 @@ import 'package:directory_tree_bench_workloads/workloads.dart';
 ///
 /// - `build`: turn the workload's paths into the implementation's tree.
 /// - `flatten`: produce the visible rows with every folder expanded.
-/// - `toggle`: collapse [Workload.toggleTarget] and produce the rows again.
+/// - `toggle`: collapse [Workload.toggleTarget] and get the updated rows the
+///   cheapest way the implementation supports (incremental when it has an
+///   incremental API).
+/// - `toggle_full`: the same collapse through a full flatten with the target
+///   collapsed in the expansion state.
 /// - `filter`: produce the rows for [Workload.filterQuery].
 /// - `diff`: diff the fully expanded rows against the rows after `toggle`.
 const List<String> standardOperations = [
   'build',
   'flatten',
   'toggle',
+  'toggle_full',
   'filter',
   'diff',
 ];
@@ -22,6 +27,7 @@ const Map<String, List<String>> standardPrerequisites = {
   'build': [],
   'flatten': ['build'],
   'toggle': ['build'],
+  'toggle_full': ['build'],
   'filter': ['build'],
   'diff': ['build', 'flatten', 'toggle'],
 };

@@ -12,7 +12,7 @@ pub package with its own `pubspec.yaml` and `analysis_options.yaml`.
 | `workloads/` | Deterministic, seeded path generators (pure Dart, no dependencies). |
 | `harness/` | Shared measurement code: CLI flags, warm-up and timed runs, the per-step time budget, JSON output. |
 | `v1/` | Subject for `directory_tree: 1.0.0` from pub.dev (exact version). |
-| `v2/` | Subject for the 2.0.0 code in this repository (added once the API is final). |
+| `v2/` | Subject for the 2.0.0 code in this repository (`directory_tree: {path: ../..}`). |
 | `runner/` | Compiles each implementation to an AOT executable, runs the matrix, writes `RESULTS.md`. |
 | `RESULTS.md` | The latest report. |
 | `results.jsonl` | Every stored record, one JSON object per line (the source of `RESULTS.md`). |
@@ -56,7 +56,7 @@ build/bench --shape deep --size 100k --runs 5 --warmup 1 --budget-ms 60000
 
 `dart run bin/bench.dart ...` works too, but it runs on the JIT; only report
 AOT numbers. Run the packages' own checks with `dart analyze` and
-`dart test` inside `workloads/`, `harness/`, `v1/`, and `runner/`.
+`dart test` inside `workloads/`, `harness/`, `v1/`, `v2/`, and `runner/`.
 
 ## Workloads
 
@@ -96,13 +96,24 @@ Only the operation itself is timed. Inputs it needs (the entry list, the
 built tree, the expanded-id sets, the rows to diff) are prepared before the
 timed runs.
 
-| Operation | What is timed (v1) |
-|---|---|
-| `build` | `TreeBuilder().build(entries: ...)` with default options. Entries are non-virtual `TreeEntry`s (id = path, name = basename), created untimed. |
-| `flatten` | `DefaultFlattenStrategy().flatten(data:, expandedIds:)` with every folder id expanded. |
-| `toggle` | Collapsing the toggle target, then producing the new rows. v1 has no incremental API, so this is a full flatten with the target removed from the expanded set. |
-| `filter` | `flatten` with `filterQuery: 'legacy'` (matches plus their ancestors). |
-| `diff` | `diffVisibleNodes(fullRows, rowsAfterToggle)`. |
+Both implementations run with their default options (v1 defaults to
+case-insensitive paths, v2 to case-sensitive ones; the workloads are all
+lower case apart from a few root files, so the trees are the same).
+
+| Operation | v1 (1.0.0) | v2 (2.0.0) |
+|---|---|---|
+| `build` | `TreeBuilder().build(entries: ...)`; entries are non-virtual `TreeEntry`s (id = path, name = basename), created untimed. | `DirectoryTree.build(entries)`; entries are `TreeEntry<Never>.file(path)`, created untimed. |
+| `flatten` | `DefaultFlattenStrategy().flatten(data:, expandedIds:)` with every folder id expanded. | `tree.flatten()` (default `ExpansionState.expanded()`). |
+| `toggle` | Collapse the toggle target the cheapest supported way. v1 has no incremental API: a full flatten with the target removed from the expanded set. | `rows.collapseNode(id)` on the fully expanded `TreeRows` (incremental; `TreeRows` is immutable, so every run starts from the same rows). |
+| `toggle_full` | Same call as `toggle` (the only way v1 can collapse). | `tree.flatten(expansion: const ExpansionState.expanded().collapse(id))`. |
+| `filter` | `flatten` with `filterQuery: 'legacy'`. | `tree.flatten(filter: TreeQuery.parse('legacy'))`. |
+| `diff` | `diffVisibleNodes(fullRows, rowsAfterToggle)`. | `ListDiff.compute(fullRows, rowsAfterToggle, keyOf: (row) => row.id)`. |
+
+So the `toggle` row compares what an application pays to collapse a folder,
+and the `toggle_full` row compares full re-flattens. Filter results are
+matches plus their ancestors in both versions. Each subject's test checks
+every count against the workload (and v2's test checks that the incremental
+and full collapse give the same rows).
 
 Each record also carries counts derived from the result (`nodes`, `rows`,
 `hidden_rows`, `removed`, `inserted`). They keep the work from being
@@ -133,9 +144,12 @@ Output is one JSON object per operation on stdout, for example:
 {"implementation":"v1","shape":"deep","size":10000,"operation":"toggle","runs":5,"warmup":1,"budget_ms":60000,"seed":20261028,"fingerprint":"131893f6","median_ms":0.593,"min_ms":0.577,"max_ms":0.61,"rows":10647,"hidden_rows":898}
 ```
 
-## Adding an implementation (v2)
+## Adding an implementation
 
-1. Create `benchmark/v2/pubspec.yaml` with `publish_to: none`, depending on
+`v2/` is the reference for a new implementation `<impl>` (add its name to
+`knownImplementations` in `runner/lib/src/report.dart` to give it a column).
+
+1. Create `benchmark/<impl>/pubspec.yaml` with `publish_to: none`, depending on
    `directory_tree: {path: ../..}`, `directory_tree_bench_harness: {path:
    ../harness}`, and `directory_tree_bench_workloads: {path: ../workloads}`,
    plus `lints` and `test` as dev dependencies. Copy
@@ -149,15 +163,16 @@ Output is one JSON object per operation on stdout, for example:
      example re-expanding the target before an incremental collapse.
    - `run(operation)` performs the operation once and returns counts derived
      from the result.
-   Use the idiomatic 2.0.0 API for each operation: for `toggle`, the cheapest
-   supported way to collapse `workload.toggleTarget` and get the updated rows.
+   Use the implementation's idiomatic API for each operation: for `toggle`,
+   the cheapest supported way to collapse `workload.toggleTarget` and get
+   the updated rows; for `toggle_full`, a full flatten.
 3. Add `bin/bench.dart`:
    ```dart
    Future<void> main(List<String> args) =>
-       runBenchmarkCli(args, implementation: 'v2', createSubject: createV2Subject);
+       runBenchmarkCli(args, implementation: '<impl>', createSubject: createSubject);
    ```
-   where `createV2Subject` is a top-level function (it is sent to isolates).
-4. Add a test like `v1/test/v1_subject_test.dart` that checks the counts
+   where `createSubject` is a top-level function (it is sent to isolates).
+4. Add a test like `v2/test/v2_subject_test.dart` that checks the counts
    against the workload, then run `dart run bin/run.dart` from `runner/`.
 
 ## Caveats
@@ -165,16 +180,24 @@ Output is one JSON object per operation on stdout, for example:
 - Wall-clock numbers depend on the machine, its load, thermal state, and
   power settings. Compare columns only when they come from the same
   environment, and close other heavy processes first.
-- The operations run one after another in the same isolate, so later
-  operations can see garbage left by earlier ones. The warm-up run absorbs
-  part of it.
+- Garbage collection dominates the spread on the 100k and 1M workloads: a
+  run that triggers a full collection of the large heap (the tree plus a
+  million rows) can take several times longer than one that does not, and
+  the operations run one after another in the same isolate, so later
+  operations also collect garbage left by earlier ones. With 5 timed runs
+  the median can land on either side, so `RESULTS.md` also has a "Fastest
+  run" table (v1 min / v2 min), which reflects the cost of the operation
+  itself. Raise `--runs` for steadier medians.
+- A v1 `build` of wide 1M takes 56-60 s on an M2 Pro, right at the default
+  budget; the stored records for it were measured with
+  `--budget-ms 180000` (the settings line in `RESULTS.md` lists every
+  budget used).
 - The workloads are synthetic. `wide` deliberately scales directory size with
   the workload, which stresses per-directory costs (v1 copies a folder's child
   list on every insertion, so building a directory of k files costs O(k^2)).
-- `build` excludes creating the input list; `toggle` in v1 includes a full
-  flatten because that is the only way v1 can do it. A v2 toggle that updates
-  rows incrementally measures a different (cheaper) algorithm by design: the
-  comparison is "what an app pays to collapse a folder".
+- `build` excludes creating the input list. `toggle` deliberately compares
+  different algorithms (v1 full flatten, v2 incremental update); use
+  `toggle_full` for a like-for-like flatten comparison.
 - `filter` uses a plain substring query; v1's `ext:` and `!` syntax is not
   exercised.
 - Generator changes alter the fingerprints and invalidate stored results;

@@ -82,14 +82,31 @@ String medianCell(BenchRecord? r) {
   return '';
 }
 
-/// The speedup of [v2] over [v1] (v1 median / v2 median).
-String speedupCell(BenchRecord? v1, BenchRecord? v2) {
-  final v2Median = v2?['median_ms'];
-  if (v1 == null || v2Median is! num || v2Median <= 0) return '';
-  final v1Median = v1['median_ms'];
-  if (v1Median is num) return '${_ratio(v1Median / v2Median)}x';
+/// The table cell for one record's fastest run.
+String minCell(BenchRecord? r) {
+  final min = r?['min_ms'];
+  return min is num ? formatMs(min) : medianCell(r);
+}
+
+/// The speedup of [v2] over [v1] (v1 [field] / v2 [field], `median_ms` by
+/// default).
+///
+/// When v1 itself exceeded the budget, the speedup is at least budget / v2.
+/// An operation that was only blocked by a failed prerequisite never ran,
+/// so it gets no speedup.
+String speedupCell(
+  BenchRecord? v1,
+  BenchRecord? v2, {
+  String field = 'median_ms',
+}) {
+  final v2Value = v2?[field];
+  if (v1 == null || v2Value is! num || v2Value <= 0) return '';
+  final v1Value = v1[field];
+  if (v1Value is num) return '${_ratio(v1Value / v2Value)}x';
   final timeout = v1['timeout_ms'];
-  if (timeout is num) return '> ${_ratio(timeout / v2Median)}x';
+  if (timeout is num && v1['blocked_by'] == null) {
+    return '> ${_ratio(timeout / v2Value)}x';
+  }
   return '';
 }
 
@@ -170,6 +187,33 @@ String renderMarkdown(
     b.writeln(
       '| ${any['operation']} | ${any['shape']} | ${_thousands(any['size']! as int)} '
       '| ${medianCell(v1)} | ${medianCell(v2)} | ${speedupCell(v1, v2)} |',
+    );
+  }
+
+  // Fastest runs, which are much less sensitive to GC pauses.
+  b
+    ..writeln()
+    ..writeln('### Fastest run')
+    ..writeln()
+    ..writeln(
+      'Minimum wall time over the timed runs. On the 100k and 1M workloads a '
+      'single run can include a full garbage collection of the large heap, '
+      'which moves the median by up to several times; the minimum shows the '
+      'cost of the operation itself. Speedup = v1 min / v2 min.',
+    )
+    ..writeln()
+    ..writeln(
+      '| operation | shape | size | v1 min (ms) | v2 min (ms) | speedup |',
+    )
+    ..writeln('|---|---|---:|---:|---:|---:|');
+  for (final entry in groups.entries) {
+    final any = entry.value.values.first;
+    final v1 = entry.value['v1'];
+    final v2 = entry.value['v2'];
+    b.writeln(
+      '| ${any['operation']} | ${any['shape']} | ${_thousands(any['size']! as int)} '
+      '| ${minCell(v1)} | ${minCell(v2)} '
+      '| ${speedupCell(v1, v2, field: 'min_ms')} |',
     );
   }
 

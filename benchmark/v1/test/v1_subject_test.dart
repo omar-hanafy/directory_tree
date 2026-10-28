@@ -37,10 +37,12 @@ void main() {
               p.substring(0, i),
         };
         final hidden = workload.toggleTargetFileCount + hiddenFolders.length;
-        expect(subject.run('toggle'), {
+        final expected = {
           'rows': paths.length + workload.folderCount - hidden,
           'hidden_rows': hidden,
-        });
+        };
+        expect(subject.run('toggle'), expected);
+        expect(subject.run('toggle_full'), expected);
       });
 
       test('filter keeps matches and their ancestors', () {

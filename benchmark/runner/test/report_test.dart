@@ -78,6 +78,18 @@ void main() {
     expect(speedupCell(slow, fast), '500x');
     expect(speedupCell(fast, slow), '0.00x');
     expect(speedupCell(timeout, fast), '> 24,000x');
+    // Blocked operations never ran, so they have no speedup.
+    expect(speedupCell(blocked, fast), '');
+    expect(
+      speedupCell(
+        _record('v1', 'build', fields: {'median_ms': 9.0, 'min_ms': 4.0}),
+        _record('v2', 'build', fields: {'median_ms': 3.0, 'min_ms': 2.0}),
+        field: 'min_ms',
+      ),
+      '2.00x',
+    );
+    expect(minCell(_record('v1', 'x', fields: {'min_ms': 1250})), '1,250');
+    expect(minCell(blocked), 'timeout (blocked by build)');
     expect(speedupCell(slow, null), '');
     expect(speedupCell(slow, timeout), '');
   });
@@ -124,6 +136,8 @@ void main() {
       ),
     );
     expect(md, contains('timeout in warmup'));
+    expect(md, contains('### Fastest run'));
+    expect(md, contains('| build | deep | 10,000 | 11.00 |  |  |'));
     expect(md, contains('`/repo/'));
     expect(md, isNot(contains(String.fromCharCode(0x2014))));
   });

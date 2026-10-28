@@ -74,6 +74,7 @@ class V1Subject extends BenchSubject {
       case 'filter':
         allFolderIds;
       case 'toggle':
+      case 'toggle_full':
         collapsedIds;
         fullRows;
       case 'diff':
@@ -94,7 +95,9 @@ class V1Subject extends BenchSubject {
       case 'flatten':
         return {'rows': _flatten(allFolderIds).length};
       case 'toggle':
-        // v1 has no incremental API: collapsing means a full re-flatten.
+      case 'toggle_full':
+        // v1 has no incremental API: collapsing always means a full
+        // re-flatten, so both toggle operations measure the same call.
         final rows = _flatten(collapsedIds);
         return {
           'rows': rows.length,

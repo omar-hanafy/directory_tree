@@ -6,7 +6,7 @@ import 'package:directory_tree_bench_workloads/workloads.dart';
 import 'runner.dart';
 import 'subject.dart';
 
-const _usage =
+final _usage =
     '''
 Usage: bench --shape <deep|wide> --size <n> [options]
 
@@ -19,7 +19,7 @@ per operation to stdout.
   --warmup <n>            Untimed warm-up runs per operation (default 1).
   --budget-ms <ms>        Longest a single step may take (default 60000).
   --seed <n>              Workload seed (default ${Workload.defaultSeed}).
-  --operations <a,b,...>  Subset of: ${'build,flatten,toggle,filter,diff'}.
+  --operations <a,b,...>  Subset of: ${standardOperations.join(',')}.
   -h, --help              Show this help.''';
 
 /// Parses [args], runs the benchmark for [implementation] with subjects from
