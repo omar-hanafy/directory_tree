@@ -61,11 +61,13 @@ final class TreeRow<T> {
   /// tree changes around it.
   NodeId get id => node.id;
 
-  /// The indentation level: 0 for top-level rows, otherwise the depth of the
-  /// parent row plus one.
+  /// The indentation level: 0 for rows without a parent row, otherwise the
+  /// depth of the parent row plus one.
   ///
   /// Equals [TreeNode.depth] of the first node of [chain], minus the number
-  /// of ancestor directories that compacted rows absorbed.
+  /// of ancestor directories that compacted rows absorbed, minus one more
+  /// when [TreeRows.showRoots] is false (the children of the top-level nodes
+  /// are then the depth-0 rows).
   final int depth;
 
   /// Whether [node] is a directory that is expanded in
@@ -83,10 +85,12 @@ final class TreeRow<T> {
   final bool hasChildren;
 
   /// Whether no later sibling row follows this one under the same parent
-  /// row (or among the top-level rows).
+  /// row (or among the depth-0 rows).
   ///
-  /// Siblings hidden by the filter do not count. Text trees draw `└── `
-  /// instead of `├── ` for the last row; see [TreeStyle].
+  /// Siblings hidden by the filter do not count. When [TreeRows.showRoots]
+  /// is false, every depth-0 row counts as a sibling of every other, across
+  /// top-level nodes, so only the very last depth-0 row is last. Text trees
+  /// draw `└── ` instead of `├── ` for the last row; see [TreeStyle].
   final bool isLast;
 
   /// Whether a node of [chain] matched the filter itself, as opposed to
@@ -240,7 +244,7 @@ final class TreeRow<T> {
 /// Create rows with [DirectoryTree.flatten]. The list holds one [TreeRow]
 /// per visible node (or per compacted chain of directories): the tree's
 /// pre-order restricted to nodes whose parent row is expanded (top-level
-/// nodes are always candidates). It is an
+/// nodes are always candidates, unless [showRoots] is false). It is an
 /// unmodifiable [List], so it plugs straight into a virtualized list view:
 /// `itemCount: rows.length`, `itemBuilder: (_, i) => draw(rows[i])`. Every
 /// mutating [List] method throws an [UnsupportedError], even when the call
@@ -263,12 +267,23 @@ final class TreeRow<T> {
 /// in the compact folders of VS Code. Compaction depends only on the tree's
 /// structure, not on the filter.
 ///
+/// ## Hidden roots
+///
+/// With [showRoots] false, the top-level nodes produce no rows and count as
+/// expanded whatever [expansion] says. Their visible children are the
+/// depth-0 rows, in root order and then child order, and all depth-0 rows
+/// are siblings for [TreeRow.isLast] and [TreeRow.guides], as if the roots
+/// did not exist. A top-level id has no row ([indexOfNode] returns -1), and
+/// [expandNode], [collapseNode], and [toggleNode] ignore it. Compacted
+/// chains start below the roots. Use it for an explorer of one folder,
+/// whose name is a title rather than a row.
+///
 /// ## Incremental updates
 ///
 /// [expandNode], [collapseNode], and [toggleNode] return new rows that equal
-/// what
-/// [DirectoryTree.flatten] would return for the updated [expansion] with the
-/// same [filter] and [compactFolders] and `expandMatches: false`, but they
+/// what [DirectoryTree.flatten] would return for the updated [expansion]
+/// with the same [filter], [compactFolders], and [showRoots] and
+/// `expandMatches: false`, but they
 /// only build the rows that change: expanding a row inserts its newly
 /// visible descendants right after it, collapsing removes them, and every
 /// other row is the identical [TreeRow] object as before. The filter is
@@ -310,6 +325,14 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   ///
   /// See [TreeRow.chain].
   bool get compactFolders => _source.compactFolders;
+
+  /// Whether the top-level nodes are rows.
+  ///
+  /// When false, the top-level nodes count as expanded and their children
+  /// are the depth-0 rows; see "Hidden roots" above and
+  /// [DirectoryTree.flatten]. [withExpansion] and the incremental updates
+  /// keep this setting.
+  bool get showRoots => _source.showRoots;
 
   /// The number of visible rows.
   ///
@@ -450,12 +473,15 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// the identical object as before. When [id] is a directory that is not
   /// visible (inside a collapsed directory, or hidden by the filter), only
   /// [expansion] changes and the rows stay the same. Returns these rows
-  /// when [id] is unknown, is a file, or is already expanded.
+  /// when [id] is unknown, is a file, is already expanded, or is a
+  /// top-level node while [showRoots] is false (hidden roots always count
+  /// as expanded).
   ///
   /// The result equals `tree.flatten(expansion: result.expansion, filter:
-  /// filter, expandMatches: false, compactFolders: compactFolders)`. Runs in
-  /// O(log rows + inserted rows) node visits without calling the filter,
-  /// plus copying the row list and the expansion state.
+  /// filter, expandMatches: false, compactFolders: compactFolders,
+  /// showRoots: showRoots)`. Runs in O(log rows + inserted rows) node visits
+  /// without calling the filter, plus copying the row list and the
+  /// expansion state.
   ///
   /// (Named `expandNode` rather than `expand` because a [List] already has
   /// [Iterable.expand].)
@@ -470,12 +496,13 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// the identical object as before. Descendants keep their own expansion,
   /// so expanding again restores them. When [id] is a directory that is not
   /// visible, only [expansion] changes. Returns these rows when [id] is
-  /// unknown, is a file, or is already collapsed.
+  /// unknown, is a file, is already collapsed, or is a top-level node while
+  /// [showRoots] is false (hidden roots cannot be collapsed).
   ///
   /// The result equals `tree.flatten(expansion: result.expansion, filter:
-  /// filter, expandMatches: false, compactFolders: compactFolders)`. Runs in
-  /// O(log rows) node visits without calling the filter, plus copying the
-  /// row list and the expansion state.
+  /// filter, expandMatches: false, compactFolders: compactFolders,
+  /// showRoots: showRoots)`. Runs in O(log rows) node visits without calling
+  /// the filter, plus copying the row list and the expansion state.
   @useResult
   TreeRows<T> collapseNode(NodeId id) => _update(id, expand: false);
 
@@ -484,13 +511,14 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   ///
   /// This is the click handler of an expand arrow. For an id inside a
   /// visible compacted row, the state that flips is the state of the row's
-  /// [TreeRow.node]. Returns these rows when [id] is unknown or a file. Same
-  /// complexity as [expandNode] and [collapseNode].
+  /// [TreeRow.node]. Returns these rows when [id] is unknown, is a file, or
+  /// is a top-level node while [showRoots] is false. Same complexity as
+  /// [expandNode] and [collapseNode].
   @useResult
   TreeRows<T> toggleNode(NodeId id) => _update(id, expand: null);
 
-  /// Returns the rows for [expansion], with the same [tree], [filter], and
-  /// [compactFolders], recomputed from scratch.
+  /// Returns the rows for [expansion], with the same [tree], [filter],
+  /// [compactFolders], and [showRoots], recomputed from scratch.
   ///
   /// [expansion] is used as given: matches are not revealed again. Use it to
   /// apply a state built elsewhere, such as [ExpansionState.expandSubtree]
@@ -507,7 +535,10 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   TreeRows<T> _update(NodeId id, {required bool? expand}) {
     final tree = _source.tree;
     final position = tree.indexOf(id);
-    if (position < 0 || !tree.nodes[position].isDirectory) return this;
+    if (position < 0) return this;
+    final node = tree.nodes[position];
+    // Hidden roots have no row and always count as expanded.
+    if (!node.isDirectory || (node.isRoot && !_source.showRoots)) return this;
     final index = _indexAt(position);
     if (index < 0) {
       // A hidden directory: its state matters only once it becomes visible.
@@ -595,15 +626,22 @@ TreeRows<T> flattenTree<T>(
   required TreeFilter? filter,
   required bool expandMatches,
   required bool compactFolders,
+  required bool showRoots,
 }) {
-  final source = _RowSource<T>(tree, filter, compactFolders: compactFolders);
+  final source = _RowSource<T>(
+    tree,
+    filter,
+    compactFolders: compactFolders,
+    showRoots: showRoots,
+  );
   final effective = expandMatches ? source.revealMatches(expansion) : expansion;
   return TreeRows<T>._(source, effective, source.buildRows(effective));
 }
 
 /// The rows that [DirectoryTree.render] prints: the rows of
 /// `tree.flatten(expansion: expansion, filter: filter, compactFolders:
-/// compactFolders)` whose depth is at most [maxDepth] (all when `null`).
+/// compactFolders, showRoots: showRoots)` whose depth is at most [maxDepth]
+/// (all when `null`).
 ///
 /// Rows deeper than [maxDepth] are never built. Package-internal.
 @internal
@@ -612,10 +650,16 @@ List<TreeRow<T>> renderRows<T>(
   required ExpansionState expansion,
   required TreeFilter? filter,
   required bool compactFolders,
+  required bool showRoots,
   required int? maxDepth,
 }) {
   if (maxDepth != null && maxDepth < 0) return <TreeRow<T>>[];
-  final source = _RowSource<T>(tree, filter, compactFolders: compactFolders);
+  final source = _RowSource<T>(
+    tree,
+    filter,
+    compactFolders: compactFolders,
+    showRoots: showRoots,
+  );
   return source.buildRows(source.revealMatches(expansion), maxDepth: maxDepth);
 }
 
@@ -634,6 +678,7 @@ final class _RowSource<T> {
     this.tree,
     this.filter,
     this.compactFolders,
+    this.showRoots,
     this._firstRoot,
     this._selfMatch,
     this._firstVisibleChild,
@@ -644,6 +689,7 @@ final class _RowSource<T> {
     DirectoryTree<T> tree,
     TreeFilter? filter, {
     required bool compactFolders,
+    required bool showRoots,
   }) {
     final nodes = tree.nodes;
     final count = nodes.length;
@@ -652,6 +698,7 @@ final class _RowSource<T> {
         tree,
         null,
         compactFolders,
+        showRoots,
         count == 0 ? -1 : 0,
         null,
         null,
@@ -697,6 +744,7 @@ final class _RowSource<T> {
       tree,
       filter,
       compactFolders,
+      showRoots,
       firstRoot,
       selfMatch,
       firstVisibleChild,
@@ -710,6 +758,10 @@ final class _RowSource<T> {
   /// The effective filter: `null` when absent or [TreeFilter.matchesAll].
   final TreeFilter? filter;
   final bool compactFolders;
+
+  /// Whether top-level nodes are rows; when false their children are the
+  /// depth-0 rows and the roots count as expanded.
+  final bool showRoots;
 
   /// The position of the first visible top-level node, or -1.
   final int _firstRoot;
@@ -734,10 +786,20 @@ final class _RowSource<T> {
     ]);
   }
 
-  /// The rows of the whole view, top-level rows first, down to [maxDepth].
+  /// The rows of the whole view, depth-0 rows first, down to [maxDepth].
   List<TreeRow<T>> buildRows(ExpansionState expansion, {int? maxDepth}) {
     final rows = <TreeRow<T>>[];
-    _emit(rows, expansion, null, _firstRoot, _nodes.length, maxDepth);
+    final _Frame<T> top;
+    if (showRoots) {
+      top = _Frame<T>(null, _firstRoot, _nodes.length);
+    } else {
+      // The roots are skipped: the depth-0 rows are their children, walked
+      // as one sibling list. The frame starts at the first root that has a
+      // visible child.
+      top = _Frame<T>(null, -1, 0);
+      if (_firstRoot >= 0) _enterRoot(top, _firstRoot);
+    }
+    _emit(rows, expansion, top, maxDepth);
     return rows;
   }
 
@@ -749,7 +811,40 @@ final class _RowSource<T> {
   ) {
     if (!row.hasChildren) return;
     final end = _nextVisibleSibling == null ? subtreeEnd(row._start) : 0;
-    _emit(out, expansion, row, firstChild(row._end), end, null);
+    _emit(out, expansion, _Frame<T>(row, firstChild(row._end), end), null);
+  }
+
+  /// Points the hidden-roots frame [frame] at the first visible child of
+  /// [root] or, when it has none, of the next root that has one; sets
+  /// `frame.next` to -1 when no root is left.
+  ///
+  /// Each root is passed over at most once per build, so a full build stays
+  /// O(roots + rows).
+  void _enterRoot(_Frame<T> frame, int root) {
+    final filtered = _nextVisibleSibling != null;
+    for (var current = root; current >= 0;) {
+      final first = firstChild(current);
+      final end = filtered ? 0 : subtreeEnd(current);
+      if (first >= 0) {
+        frame
+          ..root = current
+          ..next = first
+          ..end = end;
+        return;
+      }
+      current = _nextRoot(current, end);
+    }
+    frame
+      ..root = -1
+      ..next = -1;
+  }
+
+  /// The root after [root] in the hidden-roots walk, or -1: the next visible
+  /// top-level node.
+  int _nextRoot(int root, int rootEnd) {
+    final nextVisibleSibling = _nextVisibleSibling;
+    if (nextVisibleSibling != null) return nextVisibleSibling[root];
+    return rootEnd < _nodes.length ? rootEnd : -1;
   }
 
   /// One past the last position of the subtree at [position].
@@ -798,25 +893,25 @@ final class _RowSource<T> {
   }
 
   /// Appends to [out], in pre-order, the rows of the sibling list that
-  /// starts at position [first] (with parent row [parent]) and every
-  /// visible row below them.
+  /// [first] walks (with parent row `first.parent`) and every visible row
+  /// below them.
   ///
-  /// Iterative, so the depth of the tree never limits it. [end] is one past
-  /// the parent's subtree; it is only used without a filter, where a
-  /// sibling is the position after the previous sibling's subtree. Rows at
-  /// [maxDepth] are not descended into.
+  /// Iterative, so the depth of the tree never limits it. A frame's `end`
+  /// is one past the parent's subtree; it is only used without a filter,
+  /// where a sibling is the position after the previous sibling's subtree.
+  /// A hidden-roots frame (`root >= 0`) continues with the children of the
+  /// next root when one root's children run out, so all depth-0 rows form
+  /// one sibling list. Rows at [maxDepth] are not descended into.
   void _emit(
     List<TreeRow<T>> out,
     ExpansionState expansion,
-    TreeRow<T>? parent,
-    int first,
-    int end,
+    _Frame<T> first,
     int? maxDepth,
   ) {
-    if (first < 0) return;
+    if (first.next < 0) return;
     final nodes = _nodes;
     final nextVisibleSibling = _nextVisibleSibling;
-    final stack = <_Frame<T>>[_Frame<T>(parent, first, end)];
+    final stack = <_Frame<T>>[first];
     while (stack.isNotEmpty) {
       final frame = stack.last;
       final start = frame.next;
@@ -832,6 +927,18 @@ final class _RowSource<T> {
         frame.next = childEnd < frame.end ? childEnd : -1;
       } else {
         frame.next = nextVisibleSibling[start];
+      }
+      if (frame.next < 0 && frame.root >= 0) {
+        // The last child of a hidden root: its next sibling is the first
+        // visible child of a later root, if any. Only the bottom frame of
+        // the stack walks roots, and it moves on before any child frame is
+        // pushed, so isLast below already sees the cross-root sibling.
+        final nextRoot = _nextRoot(frame.root, frame.end);
+        if (nextRoot >= 0) {
+          _enterRoot(frame, nextRoot);
+        } else {
+          frame.root = -1;
+        }
       }
       final chainEnd = _chainEnd(start);
       final node = nodes[chainEnd];
@@ -884,10 +991,17 @@ final class _RowSource<T> {
 /// A sibling list being walked by [_RowSource._emit]: the parent row, the
 /// position of the next sibling to emit (-1 when done), and the end of the
 /// parent's subtree.
+///
+/// The top frame of a view with hidden roots also tracks the [root] whose
+/// children it is walking; [end] then moves along with [root].
 final class _Frame<T> {
   _Frame(this.parent, this.next, this.end);
 
   final TreeRow<T>? parent;
   int next;
-  final int end;
+  int end;
+
+  /// The position of the hidden root whose children this frame walks, or -1
+  /// for an ordinary frame (and once the last root is done).
+  int root = -1;
 }

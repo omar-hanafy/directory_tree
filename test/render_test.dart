@@ -366,6 +366,142 @@ void main() {
     });
   });
 
+  group('hidden roots', () {
+    test('a single root: its children start at the left margin', () {
+      final repo = DirectoryTree.fromPaths([
+        '/repo/lib/main.dart',
+        '/repo/lib/src/tree.dart',
+        '/repo/README.md',
+      ]);
+      expect(
+        repo.render(showRoots: false),
+        lines([
+          'lib/',
+          '├── src/',
+          '│   └── tree.dart',
+          '└── main.dart',
+          'README.md',
+        ]),
+      );
+      expect(
+        repo.render(showRoots: false, style: TreeStyle.ascii),
+        lines([
+          'lib/',
+          '|-- src/',
+          '|   `-- tree.dart',
+          '`-- main.dart',
+          'README.md',
+        ]),
+      );
+    });
+
+    test('multiple roots', () {
+      expect(
+        tree.render(showRoots: false),
+        lines([
+          'q.md',
+          'a/',
+          '├── x.txt',
+          '└── y.txt',
+          'b/',
+          '└── c/',
+          '    └── z.txt',
+          'top.txt',
+        ]),
+      );
+      final twoRoots = DirectoryTree.fromPaths([
+        '/m/',
+        '/m/d1/f1.txt',
+        '/m/d2/f2.txt',
+        '/n/',
+        '/n/e1/g1.txt',
+      ]);
+      expect(
+        twoRoots.render(showRoots: false),
+        lines(['d1/', '└── f1.txt', 'd2/', '└── f2.txt', 'e1/', '└── g1.txt']),
+      );
+    });
+
+    test('roots render expanded whatever the expansion says', () {
+      expect(
+        tree.render(
+          expansion: const ExpansionState.collapsed(),
+          showRoots: false,
+        ),
+        lines(['q.md', 'a/', 'b/', 'top.txt']),
+      );
+    });
+
+    test('maxDepth counts from the first visible level', () {
+      expect(
+        tree.render(showRoots: false, maxDepth: 0),
+        lines(['q.md', 'a/', 'b/', 'top.txt']),
+      );
+      expect(
+        tree.render(showRoots: false, maxDepth: 1),
+        lines([
+          'q.md',
+          'a/',
+          '├── x.txt',
+          '└── y.txt',
+          'b/',
+          '└── c/',
+          'top.txt',
+        ]),
+      );
+    });
+
+    test('compact folders start below the roots', () {
+      expect(
+        tree.render(showRoots: false, compactFolders: true),
+        lines([
+          'q.md',
+          'a/',
+          '├── x.txt',
+          '└── y.txt',
+          'b/c/',
+          '└── z.txt',
+          'top.txt',
+        ]),
+      );
+      final chain = DirectoryTree.fromPaths(['/p/', '/p/a/b/f.txt']);
+      expect(
+        chain.render(compactFolders: true),
+        lines(['p/a/b/', '└── f.txt']),
+      );
+      expect(
+        chain.render(compactFolders: true, showRoots: false),
+        lines(['a/b/', '└── f.txt']),
+      );
+    });
+
+    test('a filter with hidden roots', () {
+      expect(
+        tree.render(
+          expansion: const ExpansionState.collapsed(),
+          filter: names({'z.txt', 'q.md'}),
+          showRoots: false,
+        ),
+        lines(['q.md', 'b/', '└── c/', '    └── z.txt']),
+      );
+      expect(tree.render(filter: names({'r'}), showRoots: false), '');
+    });
+
+    test('labels see the shifted rows; empty views render nothing', () {
+      final text = tree.render(
+        showRoots: false,
+        maxDepth: 0,
+        label: (row) => '${row.label}@${row.depth}',
+      );
+      expect(text, lines(['q.md@0', 'a@0', 'b@0', 'top.txt@0']));
+      final empty = DirectoryTree<int>.empty(
+        options: const TreeOptions(roots: TreeRoots.fixed(['/a', '/b'])),
+      );
+      expect(empty.render(), lines(['a/', 'b/']));
+      expect(empty.render(showRoots: false), '');
+    });
+  });
+
   group('TreeStyle', () {
     test('presets have the documented connectors', () {
       expect(TreeStyle.unicode.branch, '├── ');

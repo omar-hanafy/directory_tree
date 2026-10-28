@@ -113,6 +113,7 @@ String renderTree<T>(
   required ExpansionState expansion,
   required TreeFilter? filter,
   required bool compactFolders,
+  required bool showRoots,
   required int? maxDepth,
   required String Function(TreeRow<T> row)? label,
 }) {
@@ -121,6 +122,7 @@ String renderTree<T>(
     expansion: expansion,
     filter: filter,
     compactFolders: compactFolders,
+    showRoots: showRoots,
     maxDepth: maxDepth,
   );
   final buffer = StringBuffer();

@@ -341,8 +341,8 @@ final class DirectoryTree<T> {
   /// the rows that change, instead of flattening again.
   ///
   /// The rows are this tree's pre-order restricted to visible nodes: a
-  /// top-level node is visible, and a child is visible when its parent's row
-  /// is visible and expanded.
+  /// top-level node is visible (unless [showRoots] is false), and a child is
+  /// visible when its parent's row is visible and expanded.
   ///
   /// * [expansion] decides which directories show their children. Defaults
   ///   to every directory expanded.
@@ -361,6 +361,26 @@ final class DirectoryTree<T> {
   ///   one row with that child, repeatedly (`lib/src/utils`), as VS Code
   ///   does. Compaction follows the tree structure, not the filter; the row
   ///   expands and collapses as its deepest directory ([TreeRow.node]).
+  /// * [showRoots] (default true) makes the top-level nodes rows. Set it to
+  ///   false for an explorer of one folder whose name is a title rather than
+  ///   a row (typically a tree with a single [TreeRoots.fixed] root). Then:
+  ///   * the top-level nodes produce no rows and count as expanded whatever
+  ///     [expansion] says. Their visible children are the depth-0 rows, in
+  ///     root order and then child order, and every row is one level
+  ///     shallower than with the roots shown.
+  ///   * all depth-0 rows are siblings for [TreeRow.isLast] and
+  ///     [TreeRow.guides], as if the roots did not exist: only the very last
+  ///     depth-0 row is last, even across roots.
+  ///   * a top-level id has no row ([TreeRows.indexOfNode] is -1 and
+  ///     [TreeRows.rowOf] is `null`), [TreeRows.parentIndexOf] of a depth-0
+  ///     row is `null`, and [TreeRows.expandNode], [TreeRows.collapseNode],
+  ///     and [TreeRows.toggleNode] ignore top-level ids.
+  ///   * [compactFolders] never merges a root with its child; chains start
+  ///     below the roots.
+  ///   * with a [filter], a root never produces a row, even when it
+  ///     matches; matches below it show as usual, and [expandMatches] still
+  ///     reveals them (adding their ancestors, roots included, to the
+  ///     state).
   ///
   /// ```dart
   /// final tree = DirectoryTree.fromPaths([
@@ -372,26 +392,34 @@ final class DirectoryTree<T> {
   /// print(rows.map((row) => row.label)); // (repo)
   /// rows = rows.toggleNode(rows.first.id);
   /// print(rows.map((row) => row.label)); // (repo, lib, README.md)
+  ///
+  /// final contents = tree.flatten(
+  ///   expansion: const ExpansionState.collapsed(),
+  ///   showRoots: false,
+  /// );
+  /// print(contents.map((row) => row.label)); // (lib, README.md)
   /// ```
   ///
   /// An empty tree, or a filter that matches nothing, gives empty rows.
-  /// Without a filter this runs in O(rows): each collapsed directory's
-  /// subtree is skipped in O(1). With a filter it runs in O(n) for n nodes
-  /// and keeps about 9 bytes per node of match results, which the returned
-  /// rows share with every update. Uses no recursion, so depth is
-  /// unlimited.
+  /// Without a filter this runs in O(rows + roots): each collapsed
+  /// directory's subtree is skipped in O(1). With a filter it runs in O(n)
+  /// for n nodes and keeps about 9 bytes per node of match results, which
+  /// the returned rows share with every update. Uses no recursion, so depth
+  /// is unlimited.
   @useResult
   TreeRows<T> flatten({
     ExpansionState expansion = const ExpansionState.expanded(),
     TreeFilter? filter,
     bool expandMatches = true,
     bool compactFolders = false,
+    bool showRoots = true,
   }) => flattenTree<T>(
     this,
     expansion: expansion,
     filter: filter,
     expandMatches: expandMatches,
     compactFolders: compactFolders,
+    showRoots: showRoots,
   );
 
   /// Renders this tree as text, one line per visible row, like the `tree`
@@ -413,17 +441,22 @@ final class DirectoryTree<T> {
   /// ```
   ///
   /// The lines are the rows of `flatten(expansion: expansion, filter:
-  /// filter, compactFolders: compactFolders)`, so a filter reveals its
-  /// matches (`expandMatches` is true) and collapsed directories show
-  /// without their children. Each top-level row starts at the left margin.
-  /// A row at depth `d >= 1` is prefixed, for each ancestor level `1` to
-  /// `d - 1`, with [TreeStyle.pipe] when [TreeRow.guides] is true at that
-  /// level and [TreeStyle.gap] otherwise, then with [TreeStyle.lastBranch]
-  /// when [TreeRow.isLast] and [TreeStyle.branch] otherwise.
+  /// filter, compactFolders: compactFolders, showRoots: showRoots)`, so a
+  /// filter reveals its matches (`expandMatches` is true) and collapsed
+  /// directories show without their children. Each depth-0 row starts at
+  /// the left margin. A row at depth `d >= 1` is prefixed, for each ancestor
+  /// level `1` to `d - 1`, with [TreeStyle.pipe] when [TreeRow.guides] is
+  /// true at that level and [TreeStyle.gap] otherwise, then with
+  /// [TreeStyle.lastBranch] when [TreeRow.isLast] and [TreeStyle.branch]
+  /// otherwise.
   ///
   /// * [style] picks the connectors; defaults to [TreeStyle.unicode].
-  /// * [maxDepth] omits rows deeper than it: 0 prints only the top-level
-  ///   rows, `null` (the default) has no limit, and a negative value prints
+  /// * [showRoots] false leaves out the top-level nodes, as in [flatten]:
+  ///   their children start at the left margin, and everything below moves
+  ///   one level left with its connectors.
+  /// * [maxDepth] omits rows deeper than it: 0 prints only the depth-0 rows
+  ///   (the top-level nodes, or their children when [showRoots] is false),
+  ///   `null` (the default) has no limit, and a negative value prints
   ///   nothing. The remaining rows keep their connectors.
   /// * [label] returns the text of each row; by default [TreeRow.label],
   ///   followed by `/` for directories unless the label already ends with
@@ -431,14 +464,15 @@ final class DirectoryTree<T> {
   ///
   /// Lines are joined with `\n`, without a trailing newline; an empty tree
   /// renders as the empty string. Runs in O(n) with a filter (one filter
-  /// call per node), otherwise in O(rows printed), plus the length of the
-  /// output. Uses no recursion, so depth is unlimited.
+  /// call per node), otherwise in O(rows printed + roots), plus the length
+  /// of the output. Uses no recursion, so depth is unlimited.
   @useResult
   String render({
     TreeStyle style = TreeStyle.unicode,
     ExpansionState expansion = const ExpansionState.expanded(),
     TreeFilter? filter,
     bool compactFolders = false,
+    bool showRoots = true,
     int? maxDepth,
     String Function(TreeRow<T> row)? label,
   }) => renderTree<T>(
@@ -447,6 +481,7 @@ final class DirectoryTree<T> {
     expansion: expansion,
     filter: filter,
     compactFolders: compactFolders,
+    showRoots: showRoots,
     maxDepth: maxDepth,
     label: label,
   );

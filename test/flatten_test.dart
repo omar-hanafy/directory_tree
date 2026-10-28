@@ -441,39 +441,226 @@ void main() {
     });
   });
 
+  group('hidden roots', () {
+    test('multiple roots: their children are one list of depth-0 rows', () {
+      final rows = tree.flatten(showRoots: false);
+      expect(rows.showRoots, isFalse);
+      expect(table(rows), [
+        'q.md|0|---M|',
+        'a|0|EC-M|',
+        'x.txt|1|---M|1',
+        'y.txt|1|--LM|1',
+        'b|0|EC-M|',
+        'c|1|ECLM|1',
+        'z.txt|2|--LM|10',
+        'top.txt|0|--LM|',
+      ]);
+      expect(rows.where((row) => row.node.isRoot), isEmpty);
+      expect(tree.flatten().showRoots, isTrue);
+    });
+
+    test('a single root', () {
+      final repo = DirectoryTree.fromPaths([
+        '/repo/lib/main.dart',
+        '/repo/lib/src/tree.dart',
+        '/repo/README.md',
+      ]);
+      expect(table(repo.flatten(showRoots: false)), [
+        'lib|0|EC-M|',
+        'src|1|EC-M|1',
+        'tree.dart|2|--LM|11',
+        'main.dart|1|--LM|1',
+        'README.md|0|--LM|',
+      ]);
+      // The DirectoryTree.flatten documentation example.
+      final contents = repo.flatten(
+        expansion: const ExpansionState.collapsed(),
+        showRoots: false,
+      );
+      expect(contents.map((row) => row.label), ['lib', 'README.md']);
+    });
+
+    test('roots count as expanded whatever the expansion says', () {
+      expect(
+        table(
+          tree.flatten(
+            expansion: const ExpansionState.collapsed(),
+            showRoots: false,
+          ),
+        ),
+        ['q.md|0|---M|', 'a|0|-C-M|', 'b|0|-C-M|', 'top.txt|0|--LM|'],
+      );
+      final rootsCollapsed = tree.flatten(
+        expansion: ExpansionState.withCollapsed([id('/r'), id('/other')]),
+        showRoots: false,
+      );
+      expect(table(rootsCollapsed), table(tree.flatten(showRoots: false)));
+    });
+
+    test('roots without visible children are skipped, wherever they are', () {
+      final fixed = DirectoryTree<Never>.build(
+        const [TreeEntry.file('/r/x.txt'), TreeEntry.file('/r/y.txt')],
+        options: const TreeOptions(
+          roots: TreeRoots.fixed(['/a-empty', '/r', '/z-empty']),
+        ),
+      );
+      expect(fixed.rootNodes.map((node) => node.name), [
+        'a-empty',
+        'r',
+        'z-empty',
+      ]);
+      expect(table(fixed.flatten(showRoots: false)), [
+        'x.txt|0|---M|',
+        'y.txt|0|--LM|',
+      ]);
+      final empty = DirectoryTree<Never>.empty(
+        options: const TreeOptions(roots: TreeRoots.fixed(['/a', '/b'])),
+      );
+      expect(empty.flatten(), hasLength(2));
+      expect(empty.flatten(showRoots: false), isEmpty);
+    });
+
+    test('compaction never merges a root with its child', () {
+      final chain = DirectoryTree.fromPaths(['/p/', '/p/a/b/f.txt']);
+      expect(table(chain.flatten(compactFolders: true)), [
+        'p/a/b|0|ECLM|',
+        'f.txt|1|--LM|0',
+      ]);
+      expect(table(chain.flatten(compactFolders: true, showRoots: false)), [
+        'a/b|0|ECLM|',
+        'f.txt|1|--LM|0',
+      ]);
+      expect(table(tree.flatten(compactFolders: true, showRoots: false)), [
+        'q.md|0|---M|',
+        'a|0|EC-M|',
+        'x.txt|1|---M|1',
+        'y.txt|1|--LM|1',
+        'b/c|0|EC-M|',
+        'z.txt|1|--LM|1',
+        'top.txt|0|--LM|',
+      ]);
+      const filesystem = TreeOptions(roots: TreeRoots.filesystem());
+      final posix = DirectoryTree.fromPaths([
+        '/usr/lib/x.so',
+        '/usr/lib/y.so',
+      ], options: filesystem);
+      expect(
+        posix
+            .flatten(compactFolders: true, showRoots: false)
+            .map((row) => row.label),
+        ['usr/lib', 'x.so', 'y.so'],
+      );
+    });
+
+    test('a filter never shows a hidden root and still reveals', () {
+      final rows = tree.flatten(
+        expansion: const ExpansionState.collapsed(),
+        filter: nameFilter((name) => name == 'z.txt' || name == 'q.md'),
+        showRoots: false,
+      );
+      expect(table(rows), [
+        'q.md|0|---M|',
+        'b|0|ECL-|',
+        'c|1|ECL-|0',
+        'z.txt|2|--LM|00',
+      ]);
+      // Revealing adds every ancestor of a match, roots included.
+      expect(
+        rows.expansion,
+        ExpansionState.withExpanded([
+          id('/other'),
+          id('/r'),
+          id('/r/b'),
+          id('/r/b/c'),
+        ]),
+      );
+      // A root that only matches itself shows nothing once hidden.
+      final rootOnly = nameFilter((name) => name == 'r');
+      expect(table(tree.flatten(filter: rootOnly)), ['r|0|E-LM|']);
+      expect(tree.flatten(filter: rootOnly, showRoots: false), isEmpty);
+      // Without revealing, collapsed directories stay collapsed.
+      final unrevealed = tree.flatten(
+        expansion: const ExpansionState.collapsed(),
+        filter: nameFilter((name) => name == 'z.txt'),
+        expandMatches: false,
+        showRoots: false,
+      );
+      expect(table(unrevealed), ['b|0|-CL-|']);
+    });
+
+    test('a 1000-deep chain under a hidden root', () {
+      final segments = [for (var i = 0; i < 1000; i++) 'd$i'];
+      final deep = DirectoryTree.fromPaths([
+        '/${segments.first}/',
+        '/${segments.join('/')}/leaf.txt',
+      ]);
+      final rows = deep.flatten(showRoots: false);
+      expect(rows, hasLength(1000));
+      expect(rows.first.label, 'd1');
+      expect(rows.last.depth, 999);
+      expect(rows.last.guides, hasLength(999));
+      final compacted = deep.flatten(compactFolders: true, showRoots: false);
+      expect(compacted.first.chain, hasLength(999));
+      expect(compacted.first.label, segments.skip(1).join('/'));
+    });
+  });
+
   group('agrees with a definitional oracle', () {
     for (var seed = 0; seed < 150; seed++) {
       test('random tree $seed', () {
         final random = Random(seed);
         final tree = randomTree(random);
-        for (final compactFolders in const [false, true]) {
-          for (final filtered in const [false, true]) {
-            final filter = filtered ? randomFilter(random, tree) : null;
-            final expansion = randomExpansion(random, tree);
-            final expandMatches = random.nextBool();
-            final rows = tree.flatten(
-              expansion: expansion,
-              filter: filter,
-              expandMatches: expandMatches,
-              compactFolders: compactFolders,
-            );
-            final expected = oracleFlatten(
-              tree,
-              expansion: expansion,
-              filter: filter,
-              expandMatches: expandMatches,
-              compactFolders: compactFolders,
-            );
-            expectRows(
-              rows,
-              expected,
-              'seed $seed, compact $compactFolders, filter $filtered, '
-              'expandMatches $expandMatches',
-            );
+        for (final showRoots in const [true, false]) {
+          for (final compactFolders in const [false, true]) {
+            for (final filtered in const [false, true]) {
+              final filter = filtered ? randomFilter(random, tree) : null;
+              final expansion = randomExpansion(random, tree);
+              final expandMatches = random.nextBool();
+              final rows = tree.flatten(
+                expansion: expansion,
+                filter: filter,
+                expandMatches: expandMatches,
+                compactFolders: compactFolders,
+                showRoots: showRoots,
+              );
+              final expected = oracleFlatten(
+                tree,
+                expansion: expansion,
+                filter: filter,
+                expandMatches: expandMatches,
+                compactFolders: compactFolders,
+                showRoots: showRoots,
+              );
+              expect(rows.showRoots, showRoots);
+              expectRows(
+                rows,
+                expected,
+                'seed $seed, showRoots $showRoots, compact $compactFolders, '
+                'filter $filtered, expandMatches $expandMatches',
+              );
+            }
           }
         }
       });
     }
+
+    test('the random trees have several roots of different kinds', () {
+      final labels = <String>{};
+      var multiRoot = 0;
+      var chainsBelowHiddenRoots = 0;
+      for (var seed = 0; seed < 150; seed++) {
+        final tree = randomTree(Random(seed));
+        labels.addAll(tree.rootNodes.map((node) => node.label));
+        if (tree.roots.length > 1) multiRoot++;
+        final hidden = tree.flatten(compactFolders: true, showRoots: false);
+        chainsBelowHiddenRoots += hidden
+            .where((row) => row.chain.length > 1)
+            .length;
+      }
+      expect(multiRoot, greaterThan(30));
+      expect(labels, containsAll(<String>['/', 'C:', '//nas/share', '.']));
+      expect(chainsBelowHiddenRoots, greaterThan(10));
+    });
   });
 }
 
@@ -491,13 +678,16 @@ typedef ExpectedRow = ({
 
 /// Flattens by the definitions in the contract, recursively and naively:
 /// visibility by scanning descendants, revealing by [ExpansionState.reveal],
-/// chains by [DirectoryTree.childrenOf].
+/// chains by [DirectoryTree.childrenOf]. With [showRoots] false the depth-0
+/// candidates are the children of every root, in root order, as one sibling
+/// list.
 ({List<ExpectedRow> rows, ExpansionState expansion}) oracleFlatten(
   DirectoryTree<Object?> tree, {
   required ExpansionState expansion,
   required TreeFilter? filter,
   required bool expandMatches,
   required bool compactFolders,
+  bool showRoots = true,
 }) {
   final active = filter == null || filter.matchesAll ? null : filter;
   bool matches(TreeNode<Object?> node) =>
@@ -541,7 +731,13 @@ typedef ExpectedRow = ({
     }
   }
 
-  emit(tree.rootNodes, 0, const []);
+  emit(
+    showRoots
+        ? tree.rootNodes
+        : [for (final root in tree.rootNodes) ...tree.childrenOf(root.id)],
+    0,
+    const [],
+  );
   return (rows: rows, expansion: state);
 }
 

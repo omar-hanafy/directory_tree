@@ -496,6 +496,153 @@ void main() {
     });
   });
 
+  group('hidden roots', () {
+    // Two roots that both have directories, so sibling relations cross the
+    // root boundary.
+    final twoRoots = DirectoryTree.fromPaths([
+      '/m/',
+      '/m/d1/f1.txt',
+      '/m/d2/f2.txt',
+      '/n/',
+      '/n/e1/g1.txt',
+    ]);
+    const d2 = NodeId('/m/d2');
+
+    test('isLast and guides cross the root boundary', () {
+      expect(table(twoRoots.flatten()), [
+        'm|0|EC-M|',
+        'd1|1|EC-M|1',
+        'f1.txt|2|--LM|11',
+        'd2|1|ECLM|1',
+        'f2.txt|2|--LM|10',
+        'n|0|ECLM|',
+        'e1|1|ECLM|0',
+        'g1.txt|2|--LM|00',
+      ]);
+      expect(table(twoRoots.flatten(showRoots: false)), [
+        'd1|0|EC-M|',
+        'f1.txt|1|--LM|1',
+        'd2|0|EC-M|',
+        'f2.txt|1|--LM|1',
+        'e1|0|ECLM|',
+        'g1.txt|1|--LM|0',
+      ]);
+    });
+
+    test('updates splice across the root boundary and reuse rows', () {
+      final rows = twoRoots.flatten(showRoots: false);
+      final collapsed = rows.collapseNode(d2);
+      expect(table(collapsed), [
+        'd1|0|EC-M|',
+        'f1.txt|1|--LM|1',
+        'd2|0|-C-M|',
+        'e1|0|ECLM|',
+        'g1.txt|1|--LM|0',
+      ]);
+      expect(identical(collapsed[0], rows[0]), isTrue);
+      expect(identical(collapsed[1], rows[1]), isTrue);
+      expect(identical(collapsed[3], rows[4]), isTrue);
+      expect(identical(collapsed[4], rows[5]), isTrue);
+      expect(collapsed.expandNode(d2), rows);
+      expect(collapsed.showRoots, isFalse);
+    });
+
+    test('keyboard helpers at depth 0', () {
+      final rows = tree.flatten(showRoots: false);
+      expect(rows.map((row) => row.label), [
+        'q.md',
+        'a',
+        'x.txt',
+        'y.txt',
+        'b',
+        'c',
+        'z.txt',
+        'top.txt',
+      ]);
+      expect(
+        [for (var i = 0; i < rows.length; i++) rows.parentIndexOf(i)],
+        [null, null, 1, 1, null, 4, 5, null],
+      );
+      expect(
+        [for (var i = 0; i < rows.length; i++) rows.firstChildIndexOf(i)],
+        [null, 2, null, null, 5, 6, null, null],
+      );
+    });
+
+    test('root ids have no row', () {
+      final rows = tree.flatten(showRoots: false, compactFolders: true);
+      for (final root in tree.roots) {
+        expect(rows.indexOfNode(root), -1, reason: '$root');
+        expect(rows.rowOf(root), isNull, reason: '$root');
+      }
+      expect(rows.indexOfNode(q), 0);
+      expect(rows.indexOfNode(b), rows.indexOfNode(c));
+      expect(rows.indexOfNode(top), rows.length - 1);
+    });
+
+    test('updates of root ids are no-ops, whatever their state', () {
+      for (final expansion in [
+        const ExpansionState.expanded(),
+        const ExpansionState.collapsed(),
+        ExpansionState.withCollapsed([r, other]),
+      ]) {
+        final rows = tree.flatten(expansion: expansion, showRoots: false);
+        for (final root in [r, other]) {
+          expect(identical(rows.expandNode(root), rows), isTrue);
+          expect(identical(rows.collapseNode(root), rows), isTrue);
+          expect(identical(rows.toggleNode(root), rows), isTrue);
+        }
+      }
+      // With the roots shown, the same ids toggle as usual.
+      final shown = tree.flatten();
+      expect(identical(shown.toggleNode(r), shown), isFalse);
+    });
+
+    test('withExpansion and updates keep showRoots', () {
+      final rows = tree.flatten(
+        filter: textFiles,
+        compactFolders: true,
+        showRoots: false,
+      );
+      expect(rows.toggleNode(a).showRoots, isFalse);
+      expect(rows.collapseNode(c).expandNode(c).showRoots, isFalse);
+      final reset = rows.withExpansion(const ExpansionState.collapsed());
+      expect(reset.showRoots, isFalse);
+      expect(
+        reset,
+        tree.flatten(
+          expansion: const ExpansionState.collapsed(),
+          filter: textFiles,
+          expandMatches: false,
+          compactFolders: true,
+          showRoots: false,
+        ),
+      );
+      expect(table(reset), ['a|0|-C--|', 'b/c|0|-C--|', 'top.txt|0|--LM|']);
+    });
+
+    test('updates never call the filter again', () {
+      var calls = 0;
+      final counting = TreeFilter.where<Object?>((node) {
+        calls++;
+        return node.name.endsWith('.txt');
+      });
+      var rows = tree.flatten(
+        expansion: const ExpansionState.collapsed(),
+        filter: counting,
+        compactFolders: true,
+        showRoots: false,
+      );
+      expect(calls, tree.length);
+      for (final id in [r, other, a, b, c, q, top, unknown, a, r, c]) {
+        rows = rows.toggleNode(id).expandNode(id).collapseNode(id);
+      }
+      rows = rows.withExpansion(const ExpansionState.expanded());
+      expect(rows, isNotEmpty);
+      expect(calls, tree.length);
+    });
+  });
+
   group('the filter is never called again', () {
     test('after flatten, no update calls the filter', () {
       var calls = 0;
@@ -534,26 +681,29 @@ void main() {
           calls++;
           return node.name.contains('a');
         });
-        for (final compactFolders in const [false, true]) {
-          calls = 0;
-          var rows = tree.flatten(
-            expansion: randomExpansion(random, tree),
-            filter: counting,
-            expandMatches: random.nextBool(),
-            compactFolders: compactFolders,
-          );
-          expect(calls, tree.length, reason: 'seed $seed');
-          for (var step = 0; step < 40; step++) {
-            final id = pickId(random, tree, rows);
-            rows = switch (random.nextInt(4)) {
-              0 => rows.expandNode(id),
-              1 => rows.collapseNode(id),
-              2 => rows.toggleNode(id),
-              _ => rows.withExpansion(randomExpansion(random, tree)),
-            };
-            expect(rows.indexOfNode(id), greaterThanOrEqualTo(-1));
+        for (final showRoots in const [true, false]) {
+          for (final compactFolders in const [false, true]) {
+            calls = 0;
+            var rows = tree.flatten(
+              expansion: randomExpansion(random, tree),
+              filter: counting,
+              expandMatches: random.nextBool(),
+              compactFolders: compactFolders,
+              showRoots: showRoots,
+            );
+            expect(calls, tree.length, reason: 'seed $seed');
+            for (var step = 0; step < 40; step++) {
+              final id = pickId(random, tree, rows);
+              rows = switch (random.nextInt(4)) {
+                0 => rows.expandNode(id),
+                1 => rows.collapseNode(id),
+                2 => rows.toggleNode(id),
+                _ => rows.withExpansion(randomExpansion(random, tree)),
+              };
+              expect(rows.indexOfNode(id), greaterThanOrEqualTo(-1));
+            }
+            expect(calls, tree.length, reason: 'seed $seed');
           }
-          expect(calls, tree.length, reason: 'seed $seed');
         }
       }
     });
@@ -564,37 +714,41 @@ void main() {
       test('random tree $seed', () {
         final random = Random(seed);
         final tree = randomTree(random);
-        for (final compactFolders in const [false, true]) {
-          for (final filtered in const [false, true]) {
-            final filter = filtered ? randomFilter(random, tree) : null;
-            var rows = tree.flatten(
-              expansion: randomExpansion(random, tree),
-              filter: filter,
-              expandMatches: random.nextBool(),
-              compactFolders: compactFolders,
-            );
-            for (var step = 0; step < 30; step++) {
-              final id = pickId(random, tree, rows);
-              final operation = random.nextInt(3);
-              final next = switch (operation) {
-                0 => rows.expandNode(id),
-                1 => rows.collapseNode(id),
-                _ => rows.toggleNode(id),
-              };
-              final reason =
-                  'seed $seed, compact $compactFolders, filter $filtered, '
-                  'step $step, ${['expand', 'collapse', 'toggle'][operation]} '
-                  '$id';
-              expectUpdate(rows, next, id, operation, reason);
-              final full = tree.flatten(
-                expansion: next.expansion,
+        for (final showRoots in const [true, false]) {
+          for (final compactFolders in const [false, true]) {
+            for (final filtered in const [false, true]) {
+              final filter = filtered ? randomFilter(random, tree) : null;
+              var rows = tree.flatten(
+                expansion: randomExpansion(random, tree),
                 filter: filter,
-                expandMatches: false,
+                expandMatches: random.nextBool(),
                 compactFolders: compactFolders,
+                showRoots: showRoots,
               );
-              expectSameRows(next, full, reason);
-              expectLookups(next, reason);
-              rows = next;
+              for (var step = 0; step < 30; step++) {
+                final id = pickId(random, tree, rows);
+                final operation = random.nextInt(3);
+                final next = switch (operation) {
+                  0 => rows.expandNode(id),
+                  1 => rows.collapseNode(id),
+                  _ => rows.toggleNode(id),
+                };
+                final reason =
+                    'seed $seed, showRoots $showRoots, compact '
+                    '$compactFolders, filter $filtered, step $step, '
+                    '${['expand', 'collapse', 'toggle'][operation]} $id';
+                expectUpdate(rows, next, id, operation, reason);
+                final full = tree.flatten(
+                  expansion: next.expansion,
+                  filter: filter,
+                  expandMatches: false,
+                  compactFolders: compactFolders,
+                  showRoots: showRoots,
+                );
+                expectSameRows(next, full, reason);
+                expectLookups(next, reason);
+                rows = next;
+              }
             }
           }
         }
@@ -606,25 +760,28 @@ void main() {
       for (var seed = 0; seed < 60; seed++) {
         final random = Random(seed);
         final tree = randomTree(random);
-        for (final compactFolders in const [false, true]) {
-          for (final filtered in const [false, true]) {
-            final filter = filtered ? randomFilter(random, tree) : null;
-            var rows = tree.flatten(
-              expansion: randomExpansion(random, tree),
-              filter: filter,
-              expandMatches: random.nextBool(),
-              compactFolders: compactFolders,
-            );
-            for (var step = 0; step < 30; step++) {
-              final id = pickId(random, tree, rows);
-              final operation = random.nextInt(3);
-              final next = switch (operation) {
-                0 => rows.expandNode(id),
-                1 => rows.collapseNode(id),
-                _ => rows.toggleNode(id),
-              };
-              seen.addAll(classify(rows, next, id, filtered: filtered));
-              rows = next;
+        for (final showRoots in const [true, false]) {
+          for (final compactFolders in const [false, true]) {
+            for (final filtered in const [false, true]) {
+              final filter = filtered ? randomFilter(random, tree) : null;
+              var rows = tree.flatten(
+                expansion: randomExpansion(random, tree),
+                filter: filter,
+                expandMatches: random.nextBool(),
+                compactFolders: compactFolders,
+                showRoots: showRoots,
+              );
+              for (var step = 0; step < 30; step++) {
+                final id = pickId(random, tree, rows);
+                final operation = random.nextInt(3);
+                final next = switch (operation) {
+                  0 => rows.expandNode(id),
+                  1 => rows.collapseNode(id),
+                  _ => rows.toggleNode(id),
+                };
+                seen.addAll(classify(rows, next, id, filtered: filtered));
+                rows = next;
+              }
             }
           }
         }
@@ -642,6 +799,11 @@ void main() {
           'chain member',
           'chain member with filter',
           'several top-level rows',
+          'hidden root',
+          'hidden root with filter',
+          'depth-0 rows from several roots',
+          'update with hidden roots',
+          'chain member under hidden roots',
         ]),
       );
     });
@@ -660,8 +822,10 @@ void expectUpdate(
   expect(identical(after.tree, before.tree), isTrue, reason: reason);
   expect(after.filter, same(before.filter), reason: reason);
   expect(after.compactFolders, before.compactFolders, reason: reason);
+  expect(after.showRoots, before.showRoots, reason: reason);
   final node = before.tree[id];
-  if (node == null || node.isFile) {
+  // Unknown ids, files, and hidden roots are no-ops.
+  if (node == null || node.isFile || (node.isRoot && !before.showRoots)) {
     expect(identical(after, before), isTrue, reason: reason);
     return;
   }
@@ -769,8 +933,21 @@ void expectLookups(TreeRows<Object?> rows, String reason) {
       lastAtDepth.add(i);
     }
     if (rows.parentIndexOf(i) != parent) problems.add('parentIndexOf($i)');
-    final parentId = parent == null ? null : rows[parent].id;
-    if (row.chain.first.parent != parentId) problems.add('parent of $i');
+    final head = row.chain.first;
+    if (parent != null) {
+      if (head.parent != rows[parent].id) problems.add('parent of $i');
+    } else if (rows.showRoots) {
+      if (!head.isRoot) problems.add('depth-0 row $i is not a root');
+    } else {
+      // Hidden roots: a depth-0 row is a child of a top-level node.
+      final parentNode = head.parent == null ? null : rows.tree[head.parent!];
+      if (parentNode == null || !parentNode.isRoot) {
+        problems.add('depth-0 row $i is not a child of a root');
+      }
+    }
+    if (!rows.showRoots && row.chain.any((member) => member.isRoot)) {
+      problems.add('row $i shows a hidden root');
+    }
     final next = i + 1;
     final child = next < rows.length && rows[next].depth == depth + 1
         ? next
@@ -795,12 +972,19 @@ Set<String> classify(
 }) {
   final kinds = <String>{};
   final node = before.tree[id];
-  if (before.where((row) => row.depth == 0).length > 1) {
-    kinds.add('several top-level rows');
+  final depthZero = before.where((row) => row.depth == 0).toList();
+  if (depthZero.length > 1) kinds.add('several top-level rows');
+  if (!before.showRoots &&
+      depthZero.map((row) => row.chain.first.parent).toSet().length > 1) {
+    kinds.add('depth-0 rows from several roots');
   }
   if (node == null) return kinds..add('unknown');
   if (node.isFile) return kinds..add('file');
+  if (node.isRoot && !before.showRoots) {
+    return kinds..add(filtered ? 'hidden root with filter' : 'hidden root');
+  }
   if (identical(after, before)) return kinds..add('unchanged');
+  if (!before.showRoots) kinds.add('update with hidden roots');
   final index = before.indexOfNode(id);
   if (index < 0) {
     final ancestorsExpanded = before.tree
@@ -813,6 +997,7 @@ Set<String> classify(
   }
   if (before[index].id != id) {
     kinds.add(filtered ? 'chain member with filter' : 'chain member');
+    if (!before.showRoots) kinds.add('chain member under hidden roots');
   }
   final delta = after.length - before.length;
   if (delta > 1) kinds.add('inserted several rows');
@@ -897,7 +1082,7 @@ ExpansionState randomExpansion(Random random, DirectoryTree<Object?> tree) {
 
 /// An id to update: usually a directory (visible or hidden), sometimes a
 /// visible row's node, an intermediate directory of a compacted row, a
-/// file, or an unknown id.
+/// top-level node, a file, or an unknown id.
 NodeId pickId(
   Random random,
   DirectoryTree<Object?> tree,
@@ -907,6 +1092,7 @@ NodeId pickId(
   final files = tree.files.toList();
   final roll = random.nextInt(20);
   if (roll == 0 || tree.isEmpty) return const NodeId('/not/in/tree');
+  if (roll == 1) return tree.roots[random.nextInt(tree.roots.length)];
   if (roll < 4 && files.isNotEmpty) {
     return files[random.nextInt(files.length)].id;
   }
