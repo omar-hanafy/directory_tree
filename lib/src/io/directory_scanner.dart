@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 
+import 'package:directory_tree/src/io/extended_length_path.dart';
 import 'package:directory_tree/src/tree/directory_tree.dart';
 import 'package:directory_tree/src/tree/tree_entry.dart';
 import 'package:directory_tree/src/tree/tree_options.dart';
@@ -34,9 +35,9 @@ import 'package:meta/meta.dart';
 /// followed by the platform separator and each name (so a relative input
 /// gives relative entries, and a symbolic link keeps its own path, not its
 /// target's). Only [scanTree] rewrites its input, and only for a relative
-/// path that climbs above its start (see there). Entries are sorted by [String.compareTo] on [TreeEntry.path]
-/// (UTF-16 code units), so the result is the same on every run over an
-/// unchanged directory.
+/// path that climbs above its start (see there). Entries are sorted by
+/// [String.compareTo] on [TreeEntry.path] (UTF-16 code units), so the result
+/// is the same on every run over an unchanged directory.
 ///
 /// Filters are applied in this order to each entity below the root:
 /// [includeHidden], then [skip]; [maxDepth] limits which directories are
@@ -46,6 +47,15 @@ import 'package:meta/meta.dart';
 /// walk runs) never abort the scan: the directory stays in the result as an
 /// entry, its listing error goes to [onError], and the walk continues. Only
 /// an invalid scan path or an invalid [maxDepth] throws.
+///
+/// On Windows, `dart:io` cannot list a directory whose path is longer than
+/// the 260-character `MAX_PATH` limit (deep `node_modules` trees often
+/// are), even where it can create one. When such a listing fails, the
+/// scanner lists the directory again through its extended-length form
+/// (`\\?\C:\...` or `\\?\UNC\server\share\...`) and reports the children
+/// under the same spelling as the rest of the scan, so the walk reaches
+/// every level. Only when that second listing fails too does its error go
+/// to [onError].
 ///
 /// A small `tree`-like command line tool:
 ///
@@ -148,7 +158,10 @@ final class DirectoryScanner {
   /// resolved. The directory or link is still reported as an entry and the
   /// walk continues with the next directory. [scan] keeps the entities that
   /// were listed before a failure; [scanSync] cannot, because the
-  /// synchronous listing fails as a whole.
+  /// synchronous listing fails as a whole. For a directory that was listed
+  /// again through its Windows extended-length path (see
+  /// [DirectoryScanner]), the error is the one of that second attempt, so
+  /// its path starts with `\\?\`.
   ///
   /// `null` (the default) ignores these failures. An exception thrown by
   /// the callback aborts the scan and propagates to the caller.
@@ -224,7 +237,7 @@ final class DirectoryScanner {
       if (visit == null) continue;
       final List<FileSystemEntity> children;
       try {
-        children = visit.directory.listSync(followLinks: false);
+        children = _listSync(visit.directory);
       } on FileSystemException catch (error) {
         onError?.call(error);
         continue;
@@ -313,6 +326,66 @@ final class DirectoryScanner {
 
   void _reportFailure(FileSystemException error) => onError?.call(error);
 
+  /// The children of [directory], listed again through its extended-length
+  /// path when the ordinary listing fails because the path is too long for
+  /// Windows (see [_longPathRetry]); throws the error of the last attempt.
+  static List<FileSystemEntity> _listSync(Directory directory) {
+    try {
+      return directory.listSync(followLinks: false);
+    } on FileSystemException {
+      final extended = _longPathRetry(directory);
+      if (extended == null) rethrow;
+      return _respell(
+        Directory(extended).listSync(followLinks: false),
+        directory,
+      );
+    }
+  }
+
+  /// Like [_listSync], for [scan]: one directory's children and listing
+  /// failures, retried through the extended-length path when nothing was
+  /// listed and the path is too long for Windows.
+  static Future<(List<FileSystemEntity>, List<FileSystemException>)> _listAsync(
+    Directory directory,
+  ) async {
+    final listed = await _listStream(directory);
+    final (children, failures) = listed;
+    if (failures.isEmpty || children.isNotEmpty) return listed;
+    final extended = _longPathRetry(directory);
+    if (extended == null) return listed;
+    final (retried, retryFailures) = await _listStream(Directory(extended));
+    return (_respell(retried, directory), retryFailures);
+  }
+
+  /// The extended-length path to list [directory] through after its
+  /// ordinary listing failed, or `null` when a retry cannot help: off
+  /// Windows, and for paths short enough that their failure has another
+  /// cause.
+  ///
+  /// The margin of 12 covers both Windows limits: a listing pattern (the
+  /// path plus `\*` and a NUL) must fit in `MAX_PATH`, and a directory path
+  /// must leave room for an 8.3 file name.
+  static String? _longPathRetry(Directory directory) {
+    if (!Platform.isWindows) return null;
+    final absolute = directory.absolute.path;
+    if (absolute.length + 12 <= windowsMaxPath) return null;
+    return windowsExtendedLengthPath(absolute);
+  }
+
+  /// [children], listed through an extended-length path, under the path
+  /// spelling of [directory] that the rest of the scan uses.
+  static List<FileSystemEntity> _respell(
+    List<FileSystemEntity> children,
+    Directory directory,
+  ) => [
+    for (final child in children)
+      switch (child) {
+        Link() => Link(_join(directory.path, _nameOf(child.path))),
+        Directory() => Directory(_join(directory.path, _nameOf(child.path))),
+        _ => File(_join(directory.path, _nameOf(child.path))),
+      },
+  ];
+
   /// Collects one directory's children and listing failures, keeping
   /// whatever was listed before a failure.
   ///
@@ -321,9 +394,8 @@ final class DirectoryScanner {
   /// escaping into the stream's zone. Errors that are not
   /// [FileSystemException]s are unexpected and complete the future with
   /// the error.
-  Future<(List<FileSystemEntity>, List<FileSystemException>)> _listAsync(
-    Directory directory,
-  ) {
+  static Future<(List<FileSystemEntity>, List<FileSystemException>)>
+  _listStream(Directory directory) {
     final children = <FileSystemEntity>[];
     final failures = <FileSystemException>[];
     final done =
