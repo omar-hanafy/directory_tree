@@ -1,7 +1,6 @@
 import 'dart:math';
 
 import 'package:directory_tree/directory_tree.dart';
-import 'package:directory_tree/src/diff/list_diff.dart';
 import 'package:test/test.dart';
 
 String _self(String item) => item;

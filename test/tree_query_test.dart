@@ -1,7 +1,6 @@
 import 'dart:math';
 
 import 'package:directory_tree/directory_tree.dart';
-import 'package:directory_tree/src/filter/tree_query.dart';
 import 'package:test/test.dart';
 
 typedef Range = ({int start, int end});

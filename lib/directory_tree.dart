@@ -41,22 +41,35 @@
 /// * [TreeOptions]: which nodes are top level ([TreeRoots]) and how
 ///   siblings are ordered ([TreeOrder]).
 /// * [TreeIssue]: inputs that were skipped, reported instead of thrown.
-/// * [TreeFilter]: node predicates for filtered views.
+/// * [TreeFilter] and [TreeQuery]: node predicates and search-box queries
+///   for filtered views.
+/// * [SelectionState]: single or multiple selection with range selection
+///   and tri-state checkbox semantics ([CheckState]).
+/// * [ListDiff] and [TreeDiff]: minimal row diffs for animated lists and
+///   added, removed, and changed nodes between two trees.
 library;
 
 // Imported only so the references in the library documentation resolve.
+import 'package:directory_tree/src/diff/list_diff.dart';
+import 'package:directory_tree/src/diff/tree_diff.dart';
 import 'package:directory_tree/src/filter/tree_filter.dart';
+import 'package:directory_tree/src/filter/tree_query.dart';
 import 'package:directory_tree/src/path/path_policy.dart';
 import 'package:directory_tree/src/path/tree_path.dart';
+import 'package:directory_tree/src/selection/selection_state.dart';
 import 'package:directory_tree/src/tree/directory_tree.dart';
 import 'package:directory_tree/src/tree/node_id.dart';
 import 'package:directory_tree/src/tree/tree_entry.dart';
 import 'package:directory_tree/src/tree/tree_issue.dart';
 import 'package:directory_tree/src/tree/tree_options.dart';
 
+export 'package:directory_tree/src/diff/list_diff.dart';
+export 'package:directory_tree/src/diff/tree_diff.dart';
 export 'package:directory_tree/src/filter/tree_filter.dart';
+export 'package:directory_tree/src/filter/tree_query.dart';
 export 'package:directory_tree/src/path/path_policy.dart';
 export 'package:directory_tree/src/path/tree_path.dart' show TreePath;
+export 'package:directory_tree/src/selection/selection_state.dart';
 export 'package:directory_tree/src/tree/directory_tree.dart';
 export 'package:directory_tree/src/tree/node_id.dart';
 export 'package:directory_tree/src/tree/tree_entry.dart';

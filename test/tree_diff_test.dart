@@ -1,7 +1,6 @@
 import 'dart:math';
 
 import 'package:directory_tree/directory_tree.dart';
-import 'package:directory_tree/src/diff/tree_diff.dart';
 import 'package:test/test.dart';
 
 List<NodeId> _ids(List<String> values) => [for (final v in values) NodeId(v)];

@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:directory_tree/directory_tree.dart';
-import 'package:directory_tree/src/selection/selection_state.dart';
 import 'package:test/test.dart';
 
 const single = SelectionMode.single;
