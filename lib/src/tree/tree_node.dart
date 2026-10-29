@@ -31,9 +31,11 @@ sealed class TreeNode<T> {
   /// directory) the code-unit-smallest spelling of each segment among the
   /// entries inside it. Any other node's path is its parent's path plus its
   /// own name, spelled by its entry or, when inferred, by the
-  /// code-unit-smallest spelling among the entries inside it. So a subtree
-  /// always displays consistently, and the spelling never depends on input
-  /// order.
+  /// code-unit-smallest spelling among the entries inside it. Only entries
+  /// the tree keeps count: a file entry dropped as a conflict (see
+  /// [TreeIssueKind.conflict]) spells nothing, so rebuilding from
+  /// `DirectoryTree.entries` gives the same paths. So a subtree always
+  /// displays consistently, and the spelling never depends on input order.
   final TreePath path;
 
   /// The last segment of [path], or a root name such as `/` or `C:`.

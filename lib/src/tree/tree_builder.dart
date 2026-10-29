@@ -246,8 +246,9 @@ final class _Slot<T> {
   Map<String, _Slot<T>>? children;
 
   /// The code-unit-smallest spelling of this slot's segment (or of the root
-  /// string, for path-root slots) among entry paths passing strictly
-  /// through it. Null for slots no entry passes through.
+  /// string, for path-root slots) among the paths of accepted entries
+  /// passing strictly through it. Null for slots no accepted entry passes
+  /// through.
   String? implied;
 
   /// The accepted entry whose path ends here, if any.
@@ -276,9 +277,10 @@ final class _Slot<T> {
 ///
 /// 1. Parse results become candidates or `invalidPath` issues.
 /// 2. With fixed roots: place the roots, then drop candidates outside them.
-/// 3. Insert candidates into the trie, recording implied spellings.
+/// 3. Insert candidates into the trie.
 /// 4. File candidates with children become `conflict` issues.
-/// 5. Contributions decide the top-level slots.
+/// 5. The accepted entries record the implied spellings of the directories
+///    they pass through, and contributions decide the top-level slots.
 /// 6. Materialize: display paths and ids top-down, labels for roots, nodes
 ///    bottom-up with sorted children, then the pre-order arrays.
 final class _TreeAssembler<T> {
@@ -302,6 +304,10 @@ final class _TreeAssembler<T> {
       if (!candidate.dropped) _insert(candidate);
     }
     _resolveConflicts(candidates);
+    // Only after conflicts are resolved: a dropped file must not spell the
+    // directories above it, or rebuilding from the tree's entries, which
+    // leave it out, would spell them differently.
+    _implySpellings(candidates);
     _markContributions(candidates);
     return _materialize(fixedRoots ?? _chooseRoots(), candidates);
   }
@@ -364,17 +370,32 @@ final class _TreeAssembler<T> {
 
   void _insert(_Candidate<T> candidate) {
     final path = candidate.path;
-    final segments = path.segments;
-    final last = segments.length - 1;
     var slot = _topSlot(path.root);
-    if (last >= 0) _imply(slot, path.root);
-    for (var i = 0; i <= last; i++) {
-      final segment = segments[i];
+    for (final segment in path.segments) {
       slot = _childSlot(slot, segment);
-      if (i < last) _imply(slot, segment);
     }
     slot.candidate = candidate;
     candidate.slot = slot;
+  }
+
+  /// Records, for every accepted entry, its spelling of each directory its
+  /// path passes strictly through, walking up from its slot. Every slot
+  /// with children keeps an accepted entry below it (only files with
+  /// children are dropped, and a leaf slot's entry is never one), so every
+  /// inferred directory gets a spelling. O(total path segments).
+  void _implySpellings(List<_Candidate<T>> candidates) {
+    for (final candidate in candidates) {
+      if (candidate.dropped) continue;
+      final path = candidate.path;
+      // A parsed path's segments are a stored list, so this is O(1).
+      final segments = path.segments;
+      var slot = candidate.slot!;
+      for (var i = segments.length - 1; i > 0; i--) {
+        slot = slot.parent!;
+        _imply(slot, segments[i - 1]);
+      }
+      if (segments.isNotEmpty) _imply(slot.parent!, path.root);
+    }
   }
 
   List<_Slot<T>> _placeFixedRoots(List<_Candidate<T>> candidates) {

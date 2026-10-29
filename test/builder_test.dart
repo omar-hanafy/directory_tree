@@ -297,6 +297,55 @@ void main() {
       expect(tree.issues.single.path, '/a/B');
       expect(tree.nodeAt('/A/B')!.isDirectory, isTrue);
     });
+
+    test('a dropped file does not spell the directories above it', () {
+      // '/q/R/a' is dropped because '/q/r/a/b' lies inside it, so only the
+      // surviving entries may spell '/q/r'.
+      final tree = DirectoryTree.fromPaths([
+        '/q/R/a',
+        '/q/r/a/b',
+        '/q/x',
+      ], options: insensitive);
+      expect(tree.issues.single.path, '/q/R/a');
+      expect(paths(tree), ['/q', '/q/r', '/q/r/a', '/q/r/a/b', '/q/x']);
+      expect(tree.rebuild((_) {}), tree);
+      expect(DirectoryTree.build(tree.entries, options: tree.options), tree);
+    });
+
+    test('rebuilding from the surviving entries reproduces the tree', () {
+      // Few names in two spellings and a shallow depth, so many files are
+      // ancestors of other entries and ancestors arrive in several
+      // spellings.
+      const names = ['a', 'A', 'b', 'B', 'c'];
+      final random = Random(404);
+      var conflicts = 0;
+      for (var round = 0; round < 500; round++) {
+        final entries = [
+          for (var e = 1 + random.nextInt(8); e > 0; e--)
+            (random.nextInt(4) == 0
+                ? TreeEntry<int>.directory
+                : TreeEntry<int>.file)(
+              '/${[for (var d = 1 + random.nextInt(4); d > 0; d--) names[random.nextInt(names.length)]].join('/')}',
+              data: e,
+            ),
+        ];
+        for (final options in [insensitive, const TreeOptions()]) {
+          final tree = DirectoryTree<int>.build(entries, options: options);
+          conflicts += tree.issues
+              .where((issue) => issue.kind == TreeIssueKind.conflict)
+              .length;
+          final reason = '$entries (${options.paths})';
+          expect(tree.rebuild((_) {}), tree, reason: reason);
+          expect(
+            DirectoryTree<int>.build(tree.entries, options: options),
+            tree,
+            reason: reason,
+          );
+        }
+      }
+      // Guard against a generator that never produces conflicts.
+      expect(conflicts, greaterThan(200));
+    });
   });
 
   group('invalid paths', () {
