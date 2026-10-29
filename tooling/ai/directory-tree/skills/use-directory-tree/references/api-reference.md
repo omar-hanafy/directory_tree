@@ -153,8 +153,10 @@ Further search rules beyond the SKILL.md table:
   that reaches the node's own name, so typing a compacted label
   (`lib/src/utils`) or a disambiguated top-level label (`a/src`) works.
 - In a glob, `*` is any run, `?` one character, `**` is the same as `*`.
-- Case-insensitive comparison lowercases per character; it is not full
-  Unicode case folding (`ß` does not match `ss`).
+- Case-insensitive comparison uses Unicode simple case folding, the same
+  table as `PathPolicy.caseInsensitive` (pinned to Unicode 18.0.0, so every
+  platform agrees). It is not full case folding: `ß` does not match `ss`,
+  and `İ` does not match `i`.
 - Two queries are equal when `source` and `caseSensitive` are equal.
 
 `TreeFilter` is an `abstract class` you may extend: implement

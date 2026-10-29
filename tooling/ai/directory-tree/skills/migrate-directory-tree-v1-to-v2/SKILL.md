@@ -118,7 +118,7 @@ grep -rnE "filterQuery|compileFilter|ext:|hasChildren" lib/ test/
 | Change | What to check |
 |---|---|
 | Paths are case SENSITIVE by default (1.x defaulted to insensitive) | Pass `TreeOptions(paths: PathPolicy.caseInsensitive)` to keep the 1.x behavior |
-| Node ids are canonical paths (`/repo/lib`, lowercased when case-insensitive); 1.x ids were `node_<entry id>` and encoded folder strings | Persisted 1.x ids match nothing: map them to paths or start with an empty state |
+| Node ids are canonical paths (`/repo/lib`, case-folded when case-insensitive); 1.x ids were `node_<entry id>` and encoded folder strings | Persisted 1.x ids match nothing: map them to paths or start with an empty state |
 | No synthetic `root` / `tree_root` node, no hidden levels (`autoPickVisibleRoot`) | Several top-level folders are several depth-0 rows; use `flatten(compactFolders: true)` for single-folder chains |
 | No virtual entries or `virtualParent` | Give every entry a real path; mark placeholders in `data` |
 | Names come from the last path segment, never from `TreeEntry.name` | Display text may change |

@@ -15,7 +15,7 @@ import 'package:meta/meta.dart';
 ///
 /// Nodes are matched by id, so both trees should use the same [PathPolicy]:
 /// under different policies the same path can have different ids (a
-/// case-insensitive tree lowercases them) and shows up as removed and added.
+/// case-insensitive tree case-folds them) and shows up as removed and added.
 ///
 /// A [TreeDiff] is an immutable value with value equality.
 @immutable

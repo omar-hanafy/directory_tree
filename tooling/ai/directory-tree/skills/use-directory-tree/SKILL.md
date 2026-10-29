@@ -93,7 +93,8 @@ print(tree.nodeAt('/repo/lib')!.isExplicit); // false
 - `NodeId` is an extension type over the canonical path string: `id.value`
   to persist, `NodeId(saved)` to restore. It is not a `String`. Derive ids
   with `tree.idOf(path)` or `policy.idOf(treePath)`, never by formatting
-  strings: under a case-insensitive policy ids are lowercased.
+  strings: under a case-insensitive policy ids are case-folded
+  (Unicode simple case folding, so `README.md` gives `readme.md`).
 - `tree.idOf(path)` returns the id whether or not the tree has that node,
   and `null` only for an unparseable path. `nodeAt(path)` returns the node
   or `null`.
@@ -125,7 +126,7 @@ print(tree.nodeAt('/repo/lib')!.isExplicit); // false
 - `PathPolicy({caseSensitive = true, backslashIsSeparator = true,
   unicodeNormalizer})`, `PathPolicy.caseInsensitive`. Pass it as
   `TreeOptions(paths: ...)`. Case-insensitive trees merge `README.md` and
-  `readme.md` into one node, keep a display spelling, and lowercase ids.
+  `readme.md` into one node, keep a display spelling, and case-fold ids.
   `unicodeNormalizer` (for example NFC) must be pure and idempotent; pass
   the same function object or options compare unequal.
 

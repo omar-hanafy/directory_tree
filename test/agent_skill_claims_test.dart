@@ -1603,6 +1603,18 @@ void main() {
     check('** is the same as *', find('**.txt'), find('*.txt'));
     check('no full case folding', find('STRASSE'), '[]');
     check(
+      'İ has no simple case folding',
+      TreeQuery.parse('istanbul').matches(
+        DirectoryTree.fromPaths(['/r/İstanbul.txt']).nodeAt('/r/İstanbul.txt')!,
+      ),
+      false,
+    );
+    check(
+      'case-insensitive ids are case-folded',
+      PathPolicy.caseInsensitive.idOf(TreePath.parse('/R/README.md')).value,
+      '/r/readme.md',
+    );
+    check(
       'queries are equal by source and caseSensitive',
       [
         TreeQuery.parse('a b') == TreeQuery.parse('a b'),
