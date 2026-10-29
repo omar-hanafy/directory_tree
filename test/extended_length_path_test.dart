@@ -46,6 +46,37 @@ void main() {
     });
   });
 
+  group('windowsOrdinaryPath', () {
+    // (input, expected)
+    const table = <(String, String)>[
+      (r'\\?\C:\a\b', r'C:\a\b'),
+      (r'\\?\c:\a', r'c:\a'),
+      (r'\\?\C:\', r'C:\'),
+      (r'\\?\UNC\server\share\a', r'\\server\share\a'),
+      (r'\\?\UNC\server\share\', r'\\server\share\'),
+      // Not an extended-length drive or UNC path: unchanged.
+      (r'C:\a\b', r'C:\a\b'),
+      (r'\\server\share\a', r'\\server\share\a'),
+      (r'\\?\Volume{0}\a', r'\\?\Volume{0}\a'),
+      (r'\\?\C:', r'\\?\C:'),
+      (r'\\.\pipe\name', r'\\.\pipe\name'),
+      ('/a/b', '/a/b'),
+      ('', ''),
+    ];
+
+    for (final (input, expected) in table) {
+      test('"$input"', () {
+        expect(windowsOrdinaryPath(input), expected);
+      });
+    }
+
+    test('inverts windowsExtendedLengthPath for normalized paths', () {
+      for (final path in [r'C:\a\b', r'C:\', r'\\server\share\a']) {
+        expect(windowsOrdinaryPath(windowsExtendedLengthPath(path)!), path);
+      }
+    });
+  });
+
   test('windowsMaxPath is the Win32 MAX_PATH', () {
     expect(windowsMaxPath, 260);
   });

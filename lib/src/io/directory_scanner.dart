@@ -72,7 +72,10 @@ import 'package:meta/meta.dart';
 /// (`\\?\C:\...` or `\\?\UNC\server\share\...`) and reports the children
 /// under the same spelling as the rest of the scan, so the walk reaches
 /// every level. Only when that second listing fails too does its error go
-/// to [onError].
+/// to [onError]. With [followLinks], a link at such a path is typed and
+/// resolved the same way, and a resolved target that comes back in
+/// extended-length form is compared in its ordinary form, so cycle
+/// detection sees one spelling.
 ///
 /// A small `tree`-like command line tool:
 ///
@@ -176,9 +179,9 @@ final class DirectoryScanner {
   /// walk continues with the next directory. [scan] keeps the entities that
   /// were listed before a failure; [scanSync] cannot, because the
   /// synchronous listing fails as a whole. For a directory that was listed
-  /// again through its Windows extended-length path (see
-  /// [DirectoryScanner]), the error is the one of that second attempt, so
-  /// its path starts with `\\?\`.
+  /// again, or a link that was resolved again, through its Windows
+  /// extended-length path (see [DirectoryScanner]), the error is the one of
+  /// that second attempt, so its path starts with `\\?\`.
   ///
   /// `null` (the default) ignores these failures. An exception thrown by
   /// the callback aborts the scan and propagates to the caller.
@@ -211,7 +214,9 @@ final class DirectoryScanner {
     final walk = _Walk(
       this,
       root,
-      rootResolved: followLinks ? await root.resolveSymbolicLinks() : null,
+      rootResolved: followLinks
+          ? _comparable(await root.resolveSymbolicLinks())
+          : null,
     );
     while (walk.isNotDone) {
       final visit = walk.next();
@@ -255,7 +260,9 @@ final class DirectoryScanner {
     final walk = _Walk(
       this,
       root,
-      rootResolved: followLinks ? root.resolveSymbolicLinksSync() : null,
+      rootResolved: followLinks
+          ? _comparable(root.resolveSymbolicLinksSync())
+          : null,
     );
     while (walk.isNotDone) {
       final visit = walk.next();
@@ -385,7 +392,7 @@ final class DirectoryScanner {
     try {
       return directory.listSync(followLinks: false);
     } on FileSystemException {
-      final extended = _longPathRetry(directory);
+      final extended = _longPathRetry(directory.path);
       if (extended == null) rethrow;
       return _respell(
         Directory(extended).listSync(followLinks: false),
@@ -403,23 +410,24 @@ final class DirectoryScanner {
     final listed = await _listStream(directory);
     final (children, failures) = listed;
     if (failures.isEmpty || children.isNotEmpty) return listed;
-    final extended = _longPathRetry(directory);
+    final extended = _longPathRetry(directory.path);
     if (extended == null) return listed;
     final (retried, retryFailures) = await _listStream(Directory(extended));
     return (_respell(retried, directory), retryFailures);
   }
 
-  /// The extended-length path to list [directory] through after its
-  /// ordinary listing failed, or `null` when a retry cannot help: off
+  /// The extended-length path to retry an operation on [path] through after
+  /// the ordinary path failed, or `null` when a retry cannot help: off
   /// Windows, and for paths short enough that their failure has another
   /// cause.
   ///
   /// The margin of 12 covers both Windows limits: a listing pattern (the
   /// path plus `\*` and a NUL) must fit in `MAX_PATH`, and a directory path
-  /// must leave room for an 8.3 file name.
-  static String? _longPathRetry(Directory directory) {
+  /// must leave room for an 8.3 file name. Links use the same margin; a
+  /// retry only follows a failure, so a loose margin costs one call at most.
+  static String? _longPathRetry(String path) {
     if (!Platform.isWindows) return null;
-    final absolute = directory.absolute.path;
+    final absolute = Directory(path).absolute.path;
     if (absolute.length + 12 <= windowsMaxPath) return null;
     return windowsExtendedLengthPath(absolute);
   }
@@ -472,27 +480,69 @@ final class DirectoryScanner {
 
   // `typeSync` is a single stat call; the asynchronous variant costs a
   // round trip to the IO thread pool for the same work.
+  //
+  // On Windows, a link whose ordinary path is too long for the Win32 calls
+  // is asked again through its extended-length path (see [_longPathRetry]),
+  // like a directory listing: first for its type when the ordinary path
+  // reports nothing, then for its target when the ordinary resolution
+  // fails. Off Windows, and for short paths, each step is one call as is.
   Future<_LinkTarget> _followAsync(Link link) async {
-    final type = FileSystemEntity.typeSync(link.path);
+    final extended = _longPathRetry(link.path);
+    final type = _linkType(link.path, extended);
     if (type != FileSystemEntityType.directory) return _LinkTarget(type);
     try {
-      return _LinkTarget(type, await link.resolveSymbolicLinks());
+      return _LinkTarget(type, _comparable(await link.resolveSymbolicLinks()));
     } on FileSystemException catch (error) {
-      onError?.call(error);
+      var last = error;
+      if (extended != null) {
+        try {
+          final resolved = await Link(extended).resolveSymbolicLinks();
+          return _LinkTarget(type, _comparable(resolved));
+        } on FileSystemException catch (retryError) {
+          last = retryError;
+        }
+      }
+      onError?.call(last);
       return const _LinkTarget(FileSystemEntityType.notFound);
     }
   }
 
   _LinkTarget _followSync(Link link) {
-    final type = FileSystemEntity.typeSync(link.path);
+    final extended = _longPathRetry(link.path);
+    final type = _linkType(link.path, extended);
     if (type != FileSystemEntityType.directory) return _LinkTarget(type);
     try {
-      return _LinkTarget(type, link.resolveSymbolicLinksSync());
+      return _LinkTarget(type, _comparable(link.resolveSymbolicLinksSync()));
     } on FileSystemException catch (error) {
-      onError?.call(error);
+      var last = error;
+      if (extended != null) {
+        try {
+          final resolved = Link(extended).resolveSymbolicLinksSync();
+          return _LinkTarget(type, _comparable(resolved));
+        } on FileSystemException catch (retryError) {
+          last = retryError;
+        }
+      }
+      onError?.call(last);
       return const _LinkTarget(FileSystemEntityType.notFound);
     }
   }
+
+  /// The type of the link target at [path], asked again through [extended]
+  /// (the extended-length path, when there is one) when [path] reports
+  /// nothing.
+  static FileSystemEntityType _linkType(String path, String? extended) {
+    final type = FileSystemEntity.typeSync(path);
+    if (type != FileSystemEntityType.notFound || extended == null) return type;
+    return FileSystemEntity.typeSync(extended);
+  }
+
+  /// A resolved path in the spelling that cycle checks compare: on Windows,
+  /// an extended-length result (`\\?\C:\...`) becomes its ordinary form,
+  /// so it matches the paths the walk joins from the resolved root. Off
+  /// Windows the path is returned unchanged.
+  static String _comparable(String resolved) =>
+      Platform.isWindows ? windowsOrdinaryPath(resolved) : resolved;
 
   /// Whether [other] is a [DirectoryScanner] with equal settings.
   ///

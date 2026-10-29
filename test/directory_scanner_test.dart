@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:directory_tree/directory_tree.dart';
 import 'package:directory_tree/io.dart';
+import 'package:directory_tree/src/io/extended_length_path.dart';
 import 'package:test/test.dart';
 
 /// Every scan result, described relative to [base] as `kind:path:Data`, so
@@ -498,6 +499,49 @@ void main() {
         ? 'symbolic links need privileges on Windows'
         : false,
   );
+
+  group('followed links past MAX_PATH', () {
+    /// Creates a directory link (a junction on Windows) at [path] to
+    /// [target], through the extended-length path when the ordinary one
+    /// is refused for its length.
+    void link(String path, String target) {
+      try {
+        Link(path).createSync(target);
+      } on FileSystemException {
+        final extended = windowsExtendedLengthPath(File(path).absolute.path);
+        if (extended == null) rethrow;
+        Link(extended).createSync(target);
+      }
+    }
+
+    test('are followed, and a link to its own directory is a cycle', () async {
+      final separator = Platform.pathSeparator;
+      create(base, ['target/inner.txt', 'target/sub/']);
+      final chain = List.filled(150, 'd').join('/');
+      create(base, ['$chain/']);
+      final bottom = [base.path, ...List.filled(150, 'd')].join(separator);
+      expect('$bottom${separator}link'.length, greaterThan(windowsMaxPath));
+      link('$bottom${separator}link', '${base.path}${separator}target');
+      link('$bottom${separator}up', bottom);
+
+      final errors = <FileSystemException>[];
+      final result = await scanBoth(
+        DirectoryScanner(followLinks: true, onError: errors.add),
+        base.path,
+      );
+      expect(errors, isEmpty);
+      expect(
+        result,
+        containsAll([
+          'd:$chain/link:Directory',
+          'f:$chain/link/inner.txt:File',
+          'd:$chain/link/sub:Directory',
+          'f:$chain/up:Link',
+        ]),
+      );
+      expect(result.where((line) => line.contains('up/')), isEmpty);
+    });
+  }, skip: Platform.isWindows ? false : 'MAX_PATH applies only on Windows');
 
   group('relative paths', () {
     late Directory relativeBase;

@@ -51,6 +51,23 @@ String? windowsExtendedLengthPath(String path) {
   return '$root$separator${segments.join(r'\')}';
 }
 
+/// The ordinary form of the Windows extended-length path [path]: the
+/// inverse of [windowsExtendedLengthPath] for drive and UNC paths.
+///
+/// `\\?\C:\a` becomes `C:\a` and `\\?\UNC\server\share\a` becomes
+/// `\\server\share\a`. Every other string, including other device paths
+/// such as `\\?\Volume{...}\` and paths without the prefix, is returned
+/// unchanged. The result can be longer than `MAX_PATH`; it is meant for
+/// comparing paths, not for passing to Win32. Pure string work; never
+/// touches the file system.
+String windowsOrdinaryPath(String path) {
+  if (path.startsWith(r'\\?\UNC\')) return '\\\\${path.substring(8)}';
+  if (path.startsWith(r'\\?\') && _isDriveRoot(path.substring(4))) {
+    return path.substring(4);
+  }
+  return path;
+}
+
 /// Whether [path] starts with a drive letter, a colon, and a backslash.
 bool _isDriveRoot(String path) {
   if (path.length < 3) return false;
