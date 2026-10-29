@@ -64,7 +64,8 @@ replacement and lists the behavior changes. `dart fix --apply` renames
 - `TreeRow` carries `isExpanded`, `isLast`, `guides`, `isMatch`, and the
   `chain` of a compacted row.
 - `DirectoryTree.render` and `TreeStyle` print a tree like the `tree`
-  command.
+  command, escaping control characters in names so each row stays on one
+  line.
 - `TreeDiff` lists the nodes added, removed, and changed between two trees.
 - `ExpansionState` and `SelectionState` round-trip through JSON.
   `SelectionState` keeps a range anchor and adds tri-state checks (`check`,
