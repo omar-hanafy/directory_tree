@@ -160,15 +160,24 @@ final class TreePath implements Comparable<TreePath> {
   /// Returns the path of the entry [name] directly inside this path.
   ///
   /// The result has this path's [root] and one more segment, so
-  /// `child(name).parent == this`. One exception mirrors parsing: on a UNC
+  /// `child(name).parent == this`. Two exceptions mirror parsing. On a UNC
   /// root without a share (`//server/`), [name] becomes the share and the
-  /// result is the share root `//server/name/`.
+  /// result is the share root `//server/name/`. Under a Win32 file
+  /// namespace root (a UNC root whose server is `?`, such as `//?/` or
+  /// `//?/UNC/`), the result is [TreePath.parse] of the joined path, because
+  /// parsing removes a namespace prefix that only respells a drive or UNC
+  /// path: `//?/` with `C:` gives `C:/`, and `//?/UNC/` with `srv` gives
+  /// `//srv/`. So the result's [toString] always parses back to it.
   ///
   /// Throws an [ArgumentError] when [name] is empty, is `.` or `..`, or
   /// contains `/`, `\`, or a NUL character. Runs in O(segments).
   @useResult
   TreePath child(String name) {
     _checkSegmentName(name);
+    if (root.startsWith('//?/')) {
+      // A namespace root: the joined path may respell a drive or UNC path.
+      return TreePath.parse(_childString(this, name));
+    }
     if (isRoot && _isServerOnlyRoot(root)) {
       return TreePath._('$root$name/', const <String>[], '$root$name/');
     }

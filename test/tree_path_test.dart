@@ -233,6 +233,49 @@ void main() {
       expect(share, TreePath.parse('//server/share'));
     });
 
+    test('child under a Win32 namespace root gives what parsing gives', () {
+      // Parsing removes a namespace prefix that only respells a drive or UNC
+      // path, so the joined path can name another root.
+      expect(TreePath.parse(r'\\?\').child('c:').toString(), 'C:/');
+      expect(TreePath.parse(r'\\?\UNC').child('srv').toString(), '//srv/');
+      expect(
+        TreePath.parse(r'\\?\unc').child('srv').child('sh').toString(),
+        '//srv/sh/',
+      );
+      expect(
+        TreePath.parse(r'\\?\UNC').child('?').child('C:').toString(),
+        'C:/',
+      );
+      // A namespace path that parsing keeps gets one more segment.
+      final volume = TreePath.parse(r'\\?\Volume{x}\a');
+      expect(volume.child('b').parent, volume);
+
+      final policies = [
+        const PathPolicy(),
+        PathPolicy.caseInsensitive,
+        const PathPolicy(backslashIsSeparator: false),
+      ];
+      for (final parent in [
+        r'\\?\',
+        r'\\?\UNC',
+        r'\\?\unc\',
+        r'\\?\UNC\?',
+        r'\\?\Volume{x}',
+        r'\\?\Volume{x}\a',
+        '//?/UNC/?/UNC',
+      ]) {
+        final path = TreePath.parse(parent);
+        for (final name in ['C:', 'c:', 'UNC', 'unc', '?', 'srv', 'x']) {
+          final child = path.child(name);
+          final reason = '$parent + $name';
+          expect(child, TreePath.parse('$path/$name'), reason: reason);
+          for (final policy in policies) {
+            expect(policy.parse(child.toString()), child, reason: reason);
+          }
+        }
+      }
+    });
+
     test('child rejects invalid names', () {
       final path = TreePath.parse('/a');
       for (final name in ['', '.', '..', 'x/y', r'x\y', 'x\u0000']) {
