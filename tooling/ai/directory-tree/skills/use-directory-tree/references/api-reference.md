@@ -204,7 +204,8 @@ the new tree's pre-order, `removed` in the old tree's; `isEmpty`.
 - With `followLinks: true`, links to directories are entered and reported
   as directories, links to files as files; broken links and links that
   would close a cycle stay `Link` file entries.
-- On Windows, directories past `MAX_PATH` are retried through the
-  `\\?\` extended-length form before reporting to `onError`.
+- On Windows, the scan root, directories, and followed links past
+  `MAX_PATH` are retried through the `\\?\` extended-length form; only a
+  failed retry reaches `onError` (or, for the root, throws).
 - `skip` and `onError` run synchronously inside the walk; an exception
   they throw aborts the scan.

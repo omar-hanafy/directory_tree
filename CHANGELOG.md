@@ -55,8 +55,8 @@ replacement and lists the behavior changes. `dart fix --apply` renames
 
 ### Added
 - `TreePath` and `PathPolicy`: platform-independent parsing of POSIX,
-  Windows drive, and UNC paths, with optional case folding and Unicode
-  normalization. Case-insensitive ids, `TreeQuery`, and
+  Windows drive, and UNC paths (including their `\\?\` spellings), with
+  optional case folding and Unicode normalization. Case-insensitive ids, `TreeQuery`, and
   `TreeOrder.compareNames` fold case with the package's own Unicode simple
   case folding table (Unicode 18.0.0), so results are identical on the VM,
   JavaScript, and WebAssembly.
@@ -77,8 +77,8 @@ replacement and lists the behavior changes. `dart fix --apply` renames
   `uncheck`, `toggleCheck`, `canCheck`, `checkStates`).
 - `TreeQuery.matchRanges` returns the ranges of a label to highlight.
 - `package:directory_tree/io.dart` adds `DirectoryScanner`, which lists a
-  directory on disk as entries. It needs `dart:io`; the core library does
-  not import it.
+  directory on disk as entries, on Windows also past `MAX_PATH`. It needs
+  `dart:io`; the core library does not import it.
 
 ### Compatibility
 - The minimum Dart SDK is now 3.8.0 (1.0.0 required 3.10.4).
