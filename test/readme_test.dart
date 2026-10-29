@@ -769,6 +769,87 @@ void main() {
       topLevel.idOf('/r/y'),
     ]);
   });
+
+  final results = File('benchmark/RESULTS.md');
+  test(
+    'the performance table matches benchmark/RESULTS.md',
+    () {
+      final report = results.readAsStringSync();
+      String between(String text, String start, String end) =>
+          text.substring(text.indexOf(start), text.indexOf(end));
+      final performance = between(readme, '## Performance', '## Gotchas');
+      // The median table comes first; the fastest-run table follows it.
+      final medians = between(report, '## Results', '### Fastest run');
+      final environment = between(report, '## Environment', '## Results');
+
+      final size = RegExp(
+        r'trees of ([\d,]+) files',
+      ).firstMatch(performance)!.group(1);
+      final reported = {
+        for (final cells in _tableRows(medians))
+          if (cells[2] == size) '${cells[0]} ${cells[1]}': [cells[3], cells[4]],
+      };
+      const operations = {
+        'Build the tree': 'build',
+        'Flatten, all expanded': 'flatten',
+        'Collapse a folder (`collapseNode`)': 'toggle',
+        'Flatten with a search query': 'filter',
+        'Diff the rows before and after a collapse': 'diff',
+      };
+      final table = _tableRows(performance);
+      expect(table, hasLength(operations.length * 2));
+      for (final cells in table) {
+        final operation = operations[cells[0]];
+        expect(operation, isNotNull, reason: 'Unknown operation ${cells[0]}');
+        expect(
+          [cells[2], cells[3]],
+          reported['$operation ${cells[1]}'],
+          reason:
+              'Copy the $size-file medians of ${cells[0]} (${cells[1]}) '
+              'from benchmark/RESULTS.md.',
+        );
+      }
+
+      // The sentence above the table names the report's machine and SDK.
+      final measured = RegExp(
+        r'Measured on\s+an?\s+(.+?)\s+with\s+Dart\s+(\S+),',
+      ).firstMatch(performance)!;
+      final machines = [
+        for (final line in environment.split('\n'))
+          if (line.startsWith('- ')) line,
+      ];
+      expect(machines, isNotEmpty);
+      for (final machine in machines) {
+        expect(machine, startsWith('- ${measured.group(1)} '));
+        expect(machine, contains('Dart SDK version: ${measured.group(2)} '));
+      }
+    },
+    // The published package leaves benchmark/ out.
+    skip: results.existsSync() ? false : 'benchmark/RESULTS.md is absent',
+  );
+}
+
+/// The cells of every row of the Markdown tables in [text], without each
+/// table's header and separator rows.
+List<List<String>> _tableRows(String text) {
+  final rows = <List<String>>[];
+  var inTable = false;
+  for (final line in text.split('\n')) {
+    if (!line.startsWith('|')) {
+      inTable = false;
+      continue;
+    }
+    final cells = [
+      for (final cell in line.substring(1, line.lastIndexOf('|')).split('|'))
+        cell.trim(),
+    ];
+    if (!inTable) {
+      inTable = true; // The header row.
+    } else if (!cells.every(RegExp(r'^:?-+:?$').hasMatch)) {
+      rows.add(cells);
+    }
+  }
+  return rows;
 }
 
 /// The tree that the README's quick start builds and later sections reuse.

@@ -834,16 +834,16 @@ an Apple M2 Pro with Dart 3.13.5, AOT-compiled:
 
 | Operation | Shape | 1.0.0 (ms) | 2.0.0 (ms) |
 | --- | --- | ---: | ---: |
-| Build the tree | deep | 2,389 | 373 |
-| Build the tree | wide | 1,714 | 312 |
-| Flatten, all expanded | deep | 10.44 | 14.03 |
-| Flatten, all expanded | wide | 7.62 | 12.72 |
-| Collapse a folder (`collapseNode`) | deep | 9.02 | 1.55 |
-| Collapse a folder (`collapseNode`) | wide | 7.04 | 2.02 |
-| Flatten with a search query | deep | 54.88 | 17.36 |
-| Flatten with a search query | wide | 52.80 | 27.84 |
-| Diff the rows before and after a collapse | deep | 29.98 | 41.57 |
-| Diff the rows before and after a collapse | wide | 23.53 | 45.74 |
+| Build the tree | deep | 2,369 | 265 |
+| Build the tree | wide | 1,669 | 209 |
+| Flatten, all expanded | deep | 20.85 | 4.90 |
+| Flatten, all expanded | wide | 18.25 | 3.59 |
+| Collapse a folder (`collapseNode`) | deep | 8.61 | 1.28 |
+| Collapse a folder (`collapseNode`) | wide | 7.54 | 1.01 |
+| Flatten with a search query | deep | 46.75 | 7.88 |
+| Flatten with a search query | wide | 52.73 | 6.40 |
+| Diff the rows before and after a collapse | deep | 31.27 | 2.74 |
+| Diff the rows before and after a collapse | wide | 25.91 | 1.39 |
 
 1.0.0 has no incremental collapse, so its collapse time is a full flatten.
 At this size a single run can include a full garbage collection, which

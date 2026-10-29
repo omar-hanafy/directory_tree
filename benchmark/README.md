@@ -206,7 +206,7 @@ Output is one JSON object per operation on stdout, for example:
   field once, on a tiny tree, in their untimed set-up, so each executable
   keeps the rows an application gets. Results measured before this read
   was added understate v1's row cost: its `flatten` medians were 10.7 ms
-  instead of 17.7 ms (deep 100k) and 187 ms instead of 277 ms (wide 1M).
+  (deep 100k) and 187 ms (wide 1M), well below those in `RESULTS.md`.
 - `filter` uses a plain substring query; v1's `ext:` and `!` syntax is not
   exercised.
 - Generator changes alter the fingerprints and invalidate stored results;
