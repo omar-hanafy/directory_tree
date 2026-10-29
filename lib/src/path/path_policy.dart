@@ -76,11 +76,21 @@ final class PathPolicy {
   /// created on macOS are often NFD while most other sources use NFC);
   /// without it, `café` in NFC and NFD are different nodes.
   ///
-  /// The function must be pure, deterministic, and idempotent: canonical
-  /// strings are parsed again, for example by
-  /// `tree.nodeAt(node.path.toString())`. It is compared with `==` by
-  /// [operator ==], so pass the same function object (for example a
-  /// top-level function tear-off) when policies should compare equal.
+  /// The function must be pure, deterministic, and idempotent, and it must
+  /// normalize each segment on its own: for any `a` and `b`, normalizing
+  /// `a/b` gives the normalized `a`, then `/`, then the normalized `b` (and
+  /// likewise around `\` when it is a separator). Canonical strings are
+  /// parsed again, for example by `tree.nodeAt(node.path.toString())`, and
+  /// so are the paths of parents and inferred directories, which the
+  /// function never saw on their own. The Unicode normalization forms (NFC,
+  /// NFD, NFKC, NFKD) qualify, because nothing composes with `/` or `\`. A
+  /// function that rewrites the ends of the whole string, such as `trim`,
+  /// does not: it leaves `/a /b` as it is but turns its parent `/a ` into
+  /// `/a`, another path.
+  ///
+  /// It is compared with `==` by [operator ==], so pass the same function
+  /// object (for example a top-level function tear-off) when policies
+  /// should compare equal.
   final String Function(String path)? unicodeNormalizer;
 
   /// Parses [path] into a canonical [TreePath].
@@ -121,7 +131,8 @@ final class PathPolicy {
   ///
   /// So `C:\work\..\repo\` parses to `C:/repo` and `a//./b/` to `a/b`.
   /// Parsing the [TreePath.toString] of a result with the same policy
-  /// returns an equal path. Runs in O(path length).
+  /// returns an equal path, given a [unicodeNormalizer] that meets its
+  /// contract. Runs in O(path length).
   ///
   /// See also [tryParse], which returns `null` instead of throwing.
   TreePath parse(String path) {

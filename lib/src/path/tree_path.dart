@@ -285,7 +285,8 @@ final class TreePath implements Comparable<TreePath> {
   /// ASCII letter (`C:`), the KELVIN SIGN (`\u212A:`, which folds to `k:`),
   /// or LATIN SMALL LETTER LONG S (`\u017F:`, which folds to `s:`). The
   /// prefix does not depend on the policy. Parsing the result with the
-  /// same policy returns an equal path.
+  /// policy that parsed this path returns an equal path, given a
+  /// [PathPolicy.unicodeNormalizer] that meets its contract.
   @override
   String toString() => _string;
 

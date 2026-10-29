@@ -127,8 +127,9 @@ print(tree.nodeAt('/repo/lib')!.isExplicit); // false
   unicodeNormalizer})`, `PathPolicy.caseInsensitive`. Pass it as
   `TreeOptions(paths: ...)`. Case-insensitive trees merge `README.md` and
   `readme.md` into one node, keep a display spelling, and case-fold ids.
-  `unicodeNormalizer` (for example NFC) must be pure and idempotent; pass
-  the same function object or options compare unequal.
+  `unicodeNormalizer` (for example NFC) must be pure, idempotent, and
+  normalize each segment on its own (the Unicode normal forms do; `trim`
+  does not); pass the same function object or options compare unequal.
 
 ## Options: roots and order
 
