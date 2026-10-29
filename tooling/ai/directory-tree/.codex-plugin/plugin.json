@@ -1,0 +1,38 @@
+{
+  "name": "directory-tree",
+  "version": "2.0.0",
+  "description": "Package-specific skills for the directory_tree Dart package: the exact 2.0.0 API (paths and policies, roots, ordering, issues, flattened rows with incremental expansion, search queries, selection and checkboxes, diffs, rendering, the file system scanner) and the 1.x to 2.0.0 migration.",
+  "author": {
+    "name": "Omar Hanafy",
+    "url": "https://github.com/omar-hanafy"
+  },
+  "homepage": "https://github.com/omar-hanafy/directory_tree#ai-coding-assistant-support",
+  "repository": "https://github.com/omar-hanafy/directory_tree",
+  "license": "MIT",
+  "keywords": [
+    "dart",
+    "flutter",
+    "directory-tree",
+    "file-tree",
+    "tree-view",
+    "file-explorer",
+    "paths"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Directory Tree",
+    "shortDescription": "Exact APIs and the 2.0.0 migration for directory_tree",
+    "longDescription": "Teaches the agent the directory_tree 2.0.0 API: building trees from paths, path policies, roots and ordering, build issues, flattened rows with incremental expand and collapse, search queries and highlighting, selection with tri-state checkboxes, list and tree diffs, text rendering, and the dart:io scanner; plus the 1.x to 2.0.0 migration with dart fix. Skills only: no MCP servers, hooks, or network access.",
+    "developerName": "Omar Hanafy",
+    "category": "Developer Tools",
+    "websiteURL": "https://pub.dev/packages/directory_tree",
+    "defaultPrompt": [
+      "Upgrade this project from directory_tree 1.x to 2.0.0",
+      "Show these file paths as an expandable tree view with directory_tree",
+      "Add search with highlighting to this directory_tree file explorer"
+    ],
+    "brandColor": "#1F6FD1",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png"
+  }
+}

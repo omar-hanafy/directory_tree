@@ -1,0 +1,20 @@
+{
+  "name": "directory-tree-tools",
+  "interface": {
+    "displayName": "Directory Tree Tools"
+  },
+  "plugins": [
+    {
+      "name": "directory-tree",
+      "source": {
+        "source": "local",
+        "path": "./tooling/ai/directory-tree"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

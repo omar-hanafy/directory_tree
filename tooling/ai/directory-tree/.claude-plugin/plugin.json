@@ -1,0 +1,23 @@
+{
+  "name": "directory-tree",
+  "displayName": "Directory Tree",
+  "version": "2.0.0",
+  "description": "Package-specific skills for the directory_tree Dart package: the exact 2.0.0 API (paths and policies, roots, ordering, issues, flattened rows with incremental expansion, search queries, selection and checkboxes, diffs, rendering, the file system scanner) and the 1.x to 2.0.0 migration.",
+  "author": {
+    "name": "Omar Hanafy",
+    "url": "https://github.com/omar-hanafy"
+  },
+  "homepage": "https://github.com/omar-hanafy/directory_tree#ai-coding-assistant-support",
+  "repository": "https://github.com/omar-hanafy/directory_tree",
+  "license": "MIT",
+  "icon": "./assets/icon.png",
+  "keywords": [
+    "dart",
+    "flutter",
+    "directory-tree",
+    "file-tree",
+    "tree-view",
+    "file-explorer",
+    "paths"
+  ]
+}

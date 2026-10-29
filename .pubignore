@@ -19,6 +19,8 @@ migrate_working_dir/
 # Maintainer-only tooling, benchmarks, and contributor docs.
 tool/
 tooling/
+# Reads the skills under tooling/, which the archive leaves out.
+test/agent_skill_claims_test.dart
 benchmark/
 AGENTS.md
 CLAUDE.md
