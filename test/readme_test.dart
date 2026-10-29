@@ -549,7 +549,8 @@ void main() {
     final printed = await _prints(() async {
       final scanner = DirectoryScanner(
         maxDepth: 2,
-        skip: (entity) => entity.path.endsWith('build'),
+        skip: (entity) =>
+            entity.path.endsWith('${Platform.pathSeparator}build'),
         onError: (error) => print('skipped ${error.path}: ${error.message}'),
       );
       final scanned = await scanner.scanTree(projectPath);

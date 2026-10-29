@@ -110,7 +110,7 @@ alternative. Only the three rows marked `dart fix` are automated.
 
 | 1.x | 2.0.0 | Notes |
 | --- | --- | --- |
-| `diffVisibleNodes(before, after)` | `ListDiff.compute(before, after, keyOf: (row) => row.id)` | Works for any keyed list. Throws an `ArgumentError` when a key repeats within one list. |
+| `diffVisibleNodes(before, after)` | `ListDiff.compute(before, after, keyOf: (row) => row.id)` | Works for any keyed list. Keys must be unique within each list: a repeat in the part that differs throws an `ArgumentError`, and repeats elsewhere are caught only with assertions enabled. |
 | `ListDiff(removeIndicesDesc: ..., insertIndicesAsc: ...)` | Removed | Diffs come only from `ListDiff.compute`. |
 | `ListDiff.removeIndicesDesc` | `ListDiff.removedIndices` | Same order (descending). `dart fix` renames reads. The list is now unmodifiable. |
 | `ListDiff.insertIndicesAsc` | `ListDiff.insertedIndices` | Same order (ascending). `dart fix` renames reads. The list is now unmodifiable. |
@@ -120,8 +120,8 @@ alternative. Only the three rows marked `dart fix` are automated.
 
 | 1.x | 2.0.0 | Notes |
 | --- | --- | --- |
-| `basename(path)` | `TreePath.parse(path).name`, `TreeNode.name` | Or `basename` from `package:path`, which 2.0.0 no longer depends on. |
-| `extensionLower(path)` | `TreePath.parse(path).extension.toLowerCase()` | See `TreeEntry.extension` above. |
+| `basename(path)` | `TreePath.parse(path).name`, `TreeNode.name` | Or `basename` from `package:path`, which 2.0.0 no longer depends on. `TreePath.parse` throws a `FormatException` for inputs 1.x accepted, such as `''` and a relative `'..'`; use `TreePath.tryParse` (null instead) for input that may not be a path. `'a/..'` resolves to `.`, so its name is `.`, where 1.x returned `..`. |
+| `extensionLower(path)` | `TreePath.parse(path).extension.toLowerCase()` | See `TreeEntry.extension` above, and the `basename` row for inputs that do not parse. |
 | `hasAnyExtension(name, extensions)` | `TreeQuery.parse('ext:jpg,png')` | For a single name, compare `TreePath.parse(name).extension.toLowerCase()` yourself. |
 | `ancestorChain(data, nodeId)` | `tree.ancestorsOf(id)` | Nearest ancestor first and without the node itself; 1.x started at the synthetic root and ended with the node. To show a node, use `ExpansionState.reveal(tree, id)` or `TreeRows.reveal(id)`. |
 | `findByVirtualPath(data, virtualPath)` | `tree.nodeAt(path)`, `tree.idOf(path)` | Takes the real path, parsed with the tree's `PathPolicy`. O(1) instead of a scan. |

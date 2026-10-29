@@ -60,12 +60,16 @@ is mutable and compares by identity.
 
 `PathPolicy.parse` rules, in order: empty input or a NUL character is a
 `FormatException`; `unicodeNormalizer` runs on the raw string; separators
-are `/`, plus `\` when `backslashIsSeparator`; `X:` followed by a
-separator or the end becomes `X:/` with the letter uppercased (`C:foo` is
-a relative segment); exactly two leading separators start a UNC root
-`//server/share/`, three or more collapse to `/`; one leading separator is
-`/`; otherwise relative. Empty and `.` segments drop; `..` removes the
-previous segment, stays at an absolute root, and throws when it climbs
+are `/`, plus `\` when `backslashIsSeparator`; with `backslashIsSeparator`,
+a Win32 file namespace prefix is read as the path it respells
+(`\\?\C:\x` is `C:/x`, `\\?\UNC\server\share\x` is `//server/share/x`),
+while other `\\?\` paths (volume GUIDs) and `\\.\` device paths stay
+literal UNC-like roots; `X:` followed by a separator or the end becomes
+`X:/` with the letter uppercased (`C:foo` is a relative segment); exactly
+two leading separators start a UNC root `//server/share/`, three or more
+collapse to `/`; one leading separator is `/`; otherwise relative. Empty
+and `.` segments drop; `..` removes the previous segment, stays at an
+absolute root, and throws when it climbs
 above a relative root. Input is not trimmed.
 
 `TreePath` members: `TreePath.parse`, `TreePath.tryParse`, `root`,
@@ -113,8 +117,10 @@ filter: filter, expandMatches: false, compactFolders: compactFolders,
 showRoots: showRoots)` and never call the filter. `toggleNode` decides
 from `expansion` (what is shown) and writes the same change to both
 states. `reveal(id)` expands only the ancestors that decide visibility and
-returns the same rows when the node is visible, unknown, or hidden by the
-filter.
+returns the same rows when the node is unknown, already visible, a hidden
+root, or hidden by the filter with no compacted row that would show it. A
+directory the filter hides but a compacted row shows (compaction follows
+the tree, not the filter) is revealed through that row.
 
 `TreeRow`: `node`, `id`, `depth`, `isExpanded` (false for files),
 `hasChildren` (false for files, empty directories, and directories whose

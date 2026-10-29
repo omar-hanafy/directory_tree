@@ -368,10 +368,11 @@ its matches here.
 ## Scanning the file system
 
 ```dart
-// import 'package:directory_tree/io.dart'; as well as the core library
+// import 'dart:io' and 'package:directory_tree/io.dart' as well
 final scanner = DirectoryScanner(
   maxDepth: 2,
-  skip: (entity) => entity.path.endsWith('build'),
+  skip: (entity) =>
+      entity.path.endsWith('${Platform.pathSeparator}build'),
   onError: (error) => print('skipped ${error.path}'),
 );
 final scanned = await scanner.scanTree(projectPath);

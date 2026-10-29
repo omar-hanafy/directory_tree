@@ -204,10 +204,11 @@ void main() {
       final projectPath = temp.path;
 
       final printed = await _prints(() async {
-        // import 'package:directory_tree/io.dart'; as well as the core library
+        // import 'dart:io' and 'package:directory_tree/io.dart' as well
         final scanner = DirectoryScanner(
           maxDepth: 2,
-          skip: (entity) => entity.path.endsWith('build'),
+          skip: (entity) =>
+              entity.path.endsWith('${Platform.pathSeparator}build'),
           onError: (error) => print('skipped ${error.path}'),
         );
         final scanned = await scanner.scanTree(projectPath);
@@ -1928,6 +1929,60 @@ void main() {
     );
 
     expect(failures, isEmpty, reason: failures.join('\n'));
+  });
+
+  test('the migration reference copies its rows from MIGRATION.md', () {
+    // The reference says it is taken from MIGRATION.md; a row edited in
+    // only one of them would teach agents an outdated mapping.
+    final migration = File('MIGRATION.md').readAsLinesSync().toSet();
+    final rows =
+        File(
+          '$_skillsDir/migrate-directory-tree-v1-to-v2/references/'
+          'v1-to-v2-api-mapping.md',
+        ).readAsLinesSync().where(
+          (line) => line.startsWith('| ') && !line.startsWith('| ---'),
+        );
+    expect(rows, isNotEmpty);
+    for (final row in rows) {
+      expect(
+        migration.contains(row),
+        isTrue,
+        reason: 'Copy this row from MIGRATION.md verbatim:\n$row',
+      );
+    }
+  });
+
+  test('path and reveal claims of the references match the API', () {
+    // basename replacements: parse rejects what 1.x accepted.
+    expect(() => TreePath.parse(''), throwsFormatException);
+    expect(() => TreePath.parse('..'), throwsFormatException);
+    expect(TreePath.tryParse(''), isNull);
+    expect(TreePath.tryParse('..'), isNull);
+    expect(TreePath.parse('a/..').name, '.');
+
+    // Win32 file namespace prefixes read as the paths they respell.
+    expect(TreePath.parse(r'\\?\C:\x').toString(), 'C:/x');
+    expect(
+      TreePath.parse(r'\\?\UNC\server\share\x').toString(),
+      '//server/share/x',
+    );
+    expect(TreePath.parse(r'\\.\pipe\x').root, startsWith('//./'));
+
+    // reveal: a directory the filter hides but a compacted row shows.
+    final tree = DirectoryTree.build(const [
+      TreeEntry<Object?>.file('/r/p/x/b/f.txt'),
+      TreeEntry<Object?>.file('/r/q.txt'),
+    ], options: const TreeOptions(roots: TreeRoots.fixed(['/r'])));
+    final rows = tree.flatten(
+      expansion: const ExpansionState.collapsed(),
+      filter: TreeFilter.where<Object?>((node) => node.name == 'x'),
+      expandMatches: false,
+      compactFolders: true,
+    );
+    final b = tree.idOf('/r/p/x/b')!;
+    final revealed = rows.reveal(b);
+    expect(identical(revealed, rows), isFalse);
+    expect(revealed.indexOfNode(b), 1);
   });
 }
 

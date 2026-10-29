@@ -86,7 +86,7 @@ assigned.
 | `compileFilter(q)`, `Predicate` | `TreeQuery.parse(q)`, `TreeFilter.where<Object?>(...)` |
 | `findByVirtualPath(data, '/tree/...')` | `tree.nodeAt(realPath)` / `tree.idOf(realPath)` |
 | `ancestorChain(data, id)` | `tree.ancestorsOf(id)` (nearest first, without the node) |
-| `basename(p)`, `extensionLower(p)` | `TreePath.parse(p).name`, `TreePath.parse(p).extension.toLowerCase()` |
+| `basename(p)`, `extensionLower(p)` | `TreePath.parse(p).name`, `TreePath.parse(p).extension.toLowerCase()`. `parse` throws a `FormatException` for `''` and a relative `'..'`, which 1.x accepted: use `TreePath.tryParse` (null instead) for input that may not be a path. `'a/..'` resolves to `.` (1.x gave `..`). |
 
 A typical rewrite of a 1.x build, expand, and diff flow:
 

@@ -763,16 +763,21 @@ directories get a trailing `/`; a custom `label` replaces that.
 ## Scanning the file system
 
 The core library never imports `dart:io`. To build a tree from a directory
-on disk, import the scanner library as well:
+on disk, import the scanner library as well (and `dart:io`, for
+`Platform` below):
 
 ```dart
+import 'dart:io';
+
+import 'package:directory_tree/directory_tree.dart';
 import 'package:directory_tree/io.dart';
 ```
 
 ```dart
 final scanner = DirectoryScanner(
   maxDepth: 2,
-  skip: (entity) => entity.path.endsWith('build'),
+  skip: (entity) =>
+      entity.path.endsWith('${Platform.pathSeparator}build'),
   onError: (error) => print('skipped ${error.path}: ${error.message}'),
 );
 final scanned = await scanner.scanTree(projectPath);
