@@ -1,3 +1,4 @@
+import 'package:directory_tree/src/path/case_folding.dart';
 import 'package:directory_tree/src/path/path_policy.dart';
 import 'package:directory_tree/src/path/tree_path.dart';
 import 'package:directory_tree/src/tree/directory_tree.dart';
@@ -235,10 +236,21 @@ abstract final class TreeOrder {
   /// compare by exact code units, so distinct names never compare equal and
   /// the result is a total order.
   ///
-  /// Case folding is per UTF-16 code unit: ASCII letters fold directly, and
-  /// other code units fold to [String.toLowerCase] when that yields a single
-  /// code unit. Runs in O(`a.length + b.length`) and allocates nothing for
-  /// ASCII names.
+  /// Letters are compared after Unicode simple case folding (CaseFolding.txt
+  /// statuses C and S, Unicode 18.0.0), one code point at a time, with the
+  /// package's own table, so the order is identical on the VM, JavaScript,
+  /// and WebAssembly, and does not follow the platform's
+  /// [String.toLowerCase]. Folded code points compare in UTF-16 code unit
+  /// order, the order [String.compareTo] uses. Consequences of the folding:
+  ///
+  /// * `Σ`, `σ`, and the final sigma `ς` all fold to `σ`.
+  /// * `İ` (U+0130) has no simple folding, so it sorts by its own code point,
+  ///   after every ASCII letter: `Jena` comes before `İzmir`.
+  /// * Cherokee lowercase letters fold to their uppercase forms.
+  /// * The KELVIN SIGN (U+212A) folds to `k` and `ẞ` (U+1E9E) to `ß`.
+  /// * Full foldings are not applied, so `ß` does not equal `ss`.
+  ///
+  /// Runs in O(`a.length + b.length`) and allocates nothing.
   static int compareNames(String a, String b) {
     final natural = _compareNatural(a, b);
     return natural != 0 ? natural : a.compareTo(b);
@@ -307,14 +319,24 @@ abstract final class TreeOrder {
         continue;
       }
       // A digit run against another character compares by the digit's code
-      // unit. Folded non-digits never fold into the digit range, so every
-      // digit run sorts at the same place relative to a given character,
-      // which keeps the order transitive.
-      final aFolded = _fold(aUnit);
-      final bFolded = _fold(bUnit);
-      if (aFolded != bFolded) return aFolded < bFolded ? -1 : 1;
-      i++;
-      j++;
+      // unit. Non-digits never fold into the digit range, so every digit
+      // run sorts at the same place relative to a given character, which
+      // keeps the order transitive.
+      if (aUnit < 0x80 && bUnit < 0x80) {
+        final aFolded = _lowerAscii(aUnit);
+        final bFolded = _lowerAscii(bUnit);
+        if (aFolded != bFolded) return aFolded < bFolded ? -1 : 1;
+        i++;
+        j++;
+        continue;
+      }
+      final aCodePoint = _codePointAt(a, i);
+      final bCodePoint = _codePointAt(b, j);
+      final aKey = _orderKey(foldCodePoint(aCodePoint));
+      final bKey = _orderKey(foldCodePoint(bCodePoint));
+      if (aKey != bKey) return aKey < bKey ? -1 : 1;
+      i += aCodePoint > 0xFFFF ? 2 : 1;
+      j += bCodePoint > 0xFFFF ? 2 : 1;
     }
     final aRest = i < aLength ? 1 : 0;
     final bRest = j < bLength ? 1 : 0;
@@ -325,21 +347,27 @@ abstract final class TreeOrder {
 
   static bool _isDigit(int unit) => unit >= _zero && unit <= 0x39;
 
-  static int _fold(int unit) {
-    if (unit < 0x80) {
-      return unit >= 0x41 && unit <= 0x5A ? unit + 0x20 : unit;
-    }
-    // Surrogate halves are not characters on their own; compare them as is.
-    if (unit >= 0xD800 && unit <= 0xDFFF) return unit;
-    return _foldCache[unit] ??= _foldNonAscii(unit);
+  static int _lowerAscii(int unit) =>
+      unit >= 0x41 && unit <= 0x5A ? unit + 0x20 : unit;
+
+  /// The code point at [index] of [text]: a decoded surrogate pair, or the
+  /// code unit itself (including an unpaired surrogate).
+  static int _codePointAt(String text, int index) {
+    final unit = text.codeUnitAt(index);
+    if (unit & 0xFC00 != 0xD800 || index + 1 >= text.length) return unit;
+    final low = text.codeUnitAt(index + 1);
+    if (low & 0xFC00 != 0xDC00) return unit;
+    return 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
   }
 
-  static int _foldNonAscii(int unit) {
-    final lower = String.fromCharCode(unit).toLowerCase();
-    return lower.length == 1 ? lower.codeUnitAt(0) : unit;
-  }
-
-  // Memoizes non-ASCII folds so sorting stays allocation free after the
-  // first sight of each code unit. Bounded by the 63k non-surrogate units.
-  static final Map<int, int> _foldCache = <int, int>{};
+  /// A sort key for a folded code point that orders code points the way
+  /// their UTF-16 encodings compare, so non-ASCII names keep the code unit
+  /// order of [String.compareTo]: a supplementary code point starts with a
+  /// surrogate (U+D800 to U+DBFF), so it sorts after U+0000 to U+D7FF and
+  /// before U+E000 to U+FFFF. Unpaired surrogates keep their value, which
+  /// is still a consistent total order. The largest key is below 2^21.
+  static int _orderKey(int codePoint) =>
+      codePoint >= 0xE000 && codePoint <= 0xFFFF
+      ? codePoint + 0x110000
+      : codePoint;
 }

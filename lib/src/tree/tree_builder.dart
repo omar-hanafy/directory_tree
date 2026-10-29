@@ -185,12 +185,10 @@ final class DirectoryTreeBuilder<T> {
 /// Folds one path part the way [PathPolicy.idOf] folds a whole path.
 ///
 /// The trie folds each segment on its own while ids fold the whole canonical
-/// string. The two agree because `/` maps to itself and is not
-/// case-ignorable, so no case-mapping context (such as the final sigma rule
-/// on the web) reaches across a separator. Materialization asserts that ids
-/// stay unique.
-String _foldWith(PathPolicy policy, String text) =>
-    policy.caseSensitive ? text : text.toLowerCase();
+/// string. The two agree because the package's simple case folding maps
+/// each code point on its own, without context, and maps `/` to itself.
+/// Materialization asserts that ids stay unique.
+String _foldWith(PathPolicy policy, String text) => policy.foldKey(text);
 
 /// An entry with its parsed path and key, or the parse error message.
 final class _BuilderItem<T> {

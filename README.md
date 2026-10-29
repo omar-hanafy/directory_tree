@@ -129,7 +129,11 @@ print(folded.files.single.path); // /repo/readme.md
 ```
 
 A case-insensitive tree keeps a display spelling for each node; only
-identity ignores case.
+identity ignores case. Case is ignored with Unicode simple case folding,
+pinned to Unicode 18.0.0 and identical on the VM, JavaScript, and
+WebAssembly, so `ΟΔΟΣ` and `οδος` are one node while `İstanbul` and
+`istanbul` stay two (`İ` has no simple folding). Search (`TreeQuery`) and
+the default sibling order fold case the same way.
 
 ### Entries with typed data
 
@@ -222,7 +226,8 @@ trailing path (`a/src`, `b/src`). `node.name` stays `src`.
 `TreeOptions.order` sorts siblings. The default, `TreeOrder.directoriesFirst`,
 puts directories first; `TreeOrder.alphabetical` interleaves them. Both
 compare names with `TreeOrder.compareNames`: natural order (`file2` before
-`file10`) without regard to case.
+`file10`) without regard to case, using the same platform-independent case
+folding as case-insensitive paths.
 
 ```dart
 final names = DirectoryTree.fromPaths([

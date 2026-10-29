@@ -54,7 +54,10 @@ replacement and lists the behavior changes. `dart fix --apply` renames
 ### Added
 - `TreePath` and `PathPolicy`: platform-independent parsing of POSIX,
   Windows drive, and UNC paths, with optional case folding and Unicode
-  normalization.
+  normalization. Case-insensitive ids, `TreeQuery`, and
+  `TreeOrder.compareNames` fold case with the package's own Unicode simple
+  case folding table (Unicode 18.0.0), so results are identical on the VM,
+  JavaScript, and WebAssembly.
 - `TreeRoots`: minimal, common-ancestor, fixed, and file-system strategies
   for choosing the top-level nodes.
 - `TreeRows` updates rows incrementally with `expandNode`, `collapseNode`,

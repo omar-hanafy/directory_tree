@@ -1,3 +1,4 @@
+import 'package:directory_tree/src/path/case_folding.dart';
 import 'package:directory_tree/src/path/path_policy.dart';
 import 'package:meta/meta.dart';
 
@@ -399,3 +400,18 @@ bool isPathSeparator(int unit, {required bool backslashIsSeparator}) =>
 @internal
 bool isAsciiLetter(int unit) =>
     (unit >= 0x41 && unit <= 0x5A) || (unit >= 0x61 && unit <= 0x7A);
+
+/// Package-internal access to a policy's case folding.
+///
+/// Declared here rather than next to [PathPolicy] because this library is
+/// exported with `show TreePath`, which keeps the extension internal.
+@internal
+extension PathPolicyFolding on PathPolicy {
+  /// [text] as [PathPolicy.idOf] keys it: unchanged when
+  /// [PathPolicy.caseSensitive], otherwise folded with the package's Unicode
+  /// simple case folding (see [foldCase]).
+  ///
+  /// Folding works per code point, so the key of each part of a path joined
+  /// with `/` equals the key of the whole path.
+  String foldKey(String text) => caseSensitive ? text : foldCase(text);
+}

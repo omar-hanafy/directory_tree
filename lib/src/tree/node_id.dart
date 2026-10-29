@@ -5,8 +5,10 @@ import 'package:directory_tree/src/tree/tree_options.dart';
 /// Stable, deterministic node identity: the policy key of the node's
 /// canonical path.
 ///
-/// The key is the canonical path string itself, lowercased when the
-/// [PathPolicy] is case insensitive. Building the same entries with the same
+/// The key is the canonical path string itself, case-folded when the
+/// [PathPolicy] is case insensitive (Unicode simple case folding pinned to
+/// Unicode 18.0.0, identical on every platform; see
+/// [PathPolicy.caseSensitive]). Building the same entries with the same
 /// [TreeOptions] always yields the same ids, so ids survive rebuilds and can
 /// key widget state, expansion sets, and selections. Two nodes in one
 /// [DirectoryTree] never share an id.

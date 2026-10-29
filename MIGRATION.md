@@ -596,10 +596,14 @@ These differences can change what your code does without a compile error.
   different nodes unless you pass
   `TreeOptions(paths: PathPolicy.caseInsensitive)`. (1.x could also build
   folders named `..` when the same directory appeared in two spellings;
-  2.0.0 merges them into one node under the case-insensitive policy.)
+  2.0.0 merges them into one node under the case-insensitive policy.) 1.x
+  ignored case with the platform's `toLowerCase`; 2.0.0 uses Unicode simple
+  case folding, pinned to Unicode 18.0.0 and identical on every platform,
+  so a few non-ASCII names merge differently: `ς` merges with `σ`, and
+  `İstanbul` no longer merges with `istanbul`.
 - **Node ids are canonical paths.** A file id was `node_<TreeEntry.id>` and
   a folder id was an encoded string such as `folder_sr_repo_L3JlcG8`. A
-  2.0.0 id is the canonical path (`/repo/lib`), lowercased under a
+  2.0.0 id is the canonical path (`/repo/lib`), case-folded under a
   case-insensitive policy. Ids you stored with 1.x, for example for
   expansion or selection, do not match any 2.0.0 node. Map them yourself or
   start with an empty state.

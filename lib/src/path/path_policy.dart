@@ -1,3 +1,4 @@
+import 'package:directory_tree/src/path/case_folding.dart';
 import 'package:directory_tree/src/path/tree_path.dart';
 import 'package:directory_tree/src/tree/node_id.dart';
 import 'package:meta/meta.dart';
@@ -38,10 +39,27 @@ final class PathPolicy {
 
   /// Whether paths that differ only in letter case are different nodes.
   ///
-  /// When false, [idOf] lowercases the canonical string with
-  /// [String.toLowerCase]. Display spelling is always preserved; only
-  /// identity is affected. Drive letters are uppercased by [parse] in every
-  /// policy, so `c:/a` and `C:/a` are the same path even when this is true.
+  /// When false, [idOf] folds the canonical string with Unicode simple case
+  /// folding: the mappings with status C and S of CaseFolding.txt, pinned
+  /// to Unicode 18.0.0 and applied one code point at a time by the
+  /// package's own table. The result is identical on the VM, JavaScript,
+  /// and WebAssembly and never follows the platform's
+  /// [String.toLowerCase], whose tables differ between platforms and
+  /// engine versions. So, in a case-insensitive tree:
+  ///
+  /// * `Σ`, `σ`, and the final sigma `ς` all fold to `σ`, wherever they
+  ///   stand in a name, so `ΟΔΟΣ`, `οδος`, and `οδοσ` are one node.
+  /// * `İ` (U+0130) has no simple folding: it stays as it is, so
+  ///   `İstanbul` and `istanbul` are different nodes.
+  /// * Cherokee lowercase letters fold to their uppercase forms.
+  /// * The KELVIN SIGN (U+212A) folds to `k`, so `\u212Am` and `km` are one
+  ///   node.
+  /// * `ẞ` (U+1E9E) folds to `ß`; full foldings are not applied, so `ß` and
+  ///   `ss` stay different.
+  ///
+  /// Display spelling is always preserved; only identity is affected.
+  /// Drive letters are uppercased by [parse] in every policy, so `c:/a` and
+  /// `C:/a` are the same path even when this is true.
   final bool caseSensitive;
 
   /// Whether `\` separates segments in addition to `/`.
@@ -225,14 +243,16 @@ final class PathPolicy {
 
   /// The identity key of [path] under this policy.
   ///
-  /// The key is the canonical [TreePath.toString], lowercased with
-  /// [String.toLowerCase] when [caseSensitive] is false. Two paths are the
-  /// same tree node exactly when their ids are equal. [path] should come
-  /// from this policy's [parse]; the key is computed from its canonical
-  /// string either way. Runs in O(path length).
+  /// The key is the canonical [TreePath.toString], case-folded when
+  /// [caseSensitive] is false with the package's Unicode 18.0.0 simple case
+  /// folding (see [caseSensitive]), so the same path has the same id on
+  /// every platform. Two paths are the same tree node exactly when their
+  /// ids are equal. [path] should come from this policy's [parse]; the key
+  /// is computed from its canonical string either way. Runs in O(path
+  /// length).
   NodeId idOf(TreePath path) {
     final string = path.toString();
-    return NodeId(caseSensitive ? string : string.toLowerCase());
+    return NodeId(caseSensitive ? string : foldCase(string));
   }
 
   static const int _slash = 0x2F;

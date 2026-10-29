@@ -1,4 +1,5 @@
 import 'package:directory_tree/src/filter/tree_filter.dart';
+import 'package:directory_tree/src/path/case_folding.dart';
 import 'package:directory_tree/src/tree/directory_tree.dart';
 import 'package:meta/meta.dart';
 
@@ -69,10 +70,25 @@ import 'package:meta/meta.dart';
 /// case-insensitively unless [caseSensitive] is true. `ext:` and `type:`
 /// always ignore case, because extensions are conventionally
 /// case-insensitive (`IMG.JPG` is a `jpg` file) and kinds are keywords.
-/// Case-insensitive comparison lowercases each character on its own and
-/// keeps a character unchanged when lowercasing would change its length
-/// (such as `İ`), so [matchRanges] indexes line up with the original text.
-/// It is not full Unicode case folding: `ß` does not match `ss`.
+/// Case-insensitive comparison uses Unicode simple case folding: the
+/// mappings with status C and S of CaseFolding.txt, pinned to Unicode
+/// 18.0.0 and applied one code point at a time by the package's own table,
+/// the same folding as a case-insensitive `PathPolicy`. Results are
+/// identical on the VM, JavaScript, and WebAssembly; the platform's
+/// [String.toLowerCase] is never used. Consequences:
+///
+/// * `Σ`, `σ`, and the final sigma `ς` all fold to `σ`, so `οδος` matches
+///   `ΟΔΟΣ`.
+/// * `İ` (U+0130) has no simple folding: it stays as it is and does not
+///   match `i`, so `istan` does not match `İstanbul` (but `stanbul` does).
+/// * Cherokee lowercase letters fold to their uppercase forms, so either
+///   case matches the other.
+/// * The KELVIN SIGN (U+212A) folds to `k` and matches `k` and `K`.
+/// * `ẞ` (U+1E9E) folds to `ß`. Full foldings are not applied, so `ß` does
+///   not match `ss`.
+///
+/// [matchRanges] always reports code units of the text as given, also
+/// for U+1DF95, the one character whose folding (`ß`) is shorter.
 ///
 /// ## Examples
 ///
@@ -170,8 +186,8 @@ final class TreeQuery extends TreeFilter {
   /// first failing term; the order never changes the result. In the common
   /// case (an ASCII name and path) it allocates nothing: case-insensitive
   /// comparisons lowercase `A`-`Z` while comparing, and only a non-ASCII
-  /// name or path is copied, once per call, to fold it (and a glob over one
-  /// is converted to runes).
+  /// name or path that folding changes is copied, once per call, to fold
+  /// it (and a glob over one is converted to runes).
   ///
   /// Runs in O(terms x (name length + path length)) for plain, key, and
   /// quoted terms (times the term length in the worst case of a highly
@@ -227,25 +243,37 @@ final class TreeQuery extends TreeFilter {
           final segment = term.segmentText;
           if (!hit && segment != null) {
             final fullPath = path ??= node.path.toString();
+            // The string searched: the path itself, or its folded form for
+            // a case-insensitive query over a non-ASCII path.
+            var searched = fullPath;
             final int index;
             if (caseSensitive) {
               index = fullPath.lastIndexOf(segment);
             } else {
               if (pathAscii < 0) pathAscii = _isAscii(fullPath) ? 1 : 0;
-              index = pathAscii == 1
-                  ? _lastIndexOfAscii(fullPath, segment)
-                  : (foldedPath ??= _fold(fullPath)).lastIndexOf(segment);
+              if (pathAscii == 1) {
+                index = _lastIndexOfAscii(fullPath, segment);
+              } else {
+                searched = foldedPath ??= _fold(fullPath);
+                index = searched.lastIndexOf(segment);
+              }
             }
             // The canonical string ends with the last segment, which is the
-            // name, and a path root is all name. Folding keeps the length,
-            // so this indexes the folded path too. The last occurrence ends
+            // name, and a path root is all name. The last occurrence ends
             // furthest right, so it reaches the name if any occurrence
-            // does. Reading the name instead of `path.segments` matters:
-            // a node path builds and keeps its O(depth) segment list on
-            // first access.
-            final nameStart = node.path.isRoot
-                ? 0
-                : fullPath.length - name.length;
+            // does. Folding almost always keeps the length, so the name
+            // starts at the same index in the folded path; only a path
+            // with U+1DF95 needs the folded name's length. Reading the name
+            // instead of `path.segments` matters: a node path builds and
+            // keeps its O(depth) segment list on first access.
+            final int nameStart;
+            if (node.path.isRoot) {
+              nameStart = 0;
+            } else if (searched.length == fullPath.length) {
+              nameStart = fullPath.length - name.length;
+            } else {
+              nameStart = searched.length - (foldedName ??= _fold(name)).length;
+            }
             hit = index >= 0 && index + segment.length >= nameStart;
           }
         case _PathTerm():
@@ -274,19 +302,21 @@ final class TreeQuery extends TreeFilter {
           final segments = term.segmentPattern;
           if (!hit && segments != null) {
             final fullPath = path ??= node.path.toString();
-            final start = _tailStart(fullPath, term.segmentCount);
             if (pathAscii < 0) pathAscii = _isAscii(fullPath) ? 1 : 0;
             if (pathAscii == 1) {
               hit = _globMatchesAscii(
                 segments,
                 fullPath,
-                start,
+                _tailStart(fullPath, term.segmentCount),
                 foldCase: !caseSensitive,
               );
             } else {
+              // Look for the tail in the string that is matched: folding
+              // keeps every '/' but may shorten the text before it.
               final subject = caseSensitive
                   ? fullPath
                   : (foldedPath ??= _fold(fullPath));
+              final start = _tailStart(subject, term.segmentCount);
               hit = _globMatches(
                 segments,
                 subject.substring(start).runes.toList(),
@@ -325,11 +355,21 @@ final class TreeQuery extends TreeFilter {
       return const <({int start, int end})>[];
     }
     final haystack = caseSensitive ? text : _fold(text);
+    // Indexes into [haystack] are indexes into [text] unless folding
+    // changed the length (only U+1DF95 does); then they are translated.
+    final toText = haystack.length == text.length
+        ? null
+        : _toOriginalIndexes(text, haystack);
     final found = <({int start, int end})>[];
     for (final needle in _highlights) {
       var index = haystack.indexOf(needle);
       while (index >= 0) {
-        found.add((start: index, end: index + needle.length));
+        final end = index + needle.length;
+        found.add(
+          toText == null
+              ? (start: index, end: end)
+              : (start: toText[index], end: toText[end]),
+        );
         index = haystack.indexOf(needle, index + 1);
       }
     }
@@ -874,38 +914,43 @@ bool _globMatchesAscii(
   return p == pattern.length;
 }
 
-/// Lowercases [text] one character at a time without changing its length.
+/// [text] case-folded for a case-insensitive comparison: the package's
+/// Unicode simple case folding ([foldCase]), identical on every platform.
 ///
-/// Per-character lowercasing (instead of one `toLowerCase` call on the whole
-/// string) keeps results identical on every platform: JavaScript applies the
-/// context-dependent final-sigma rule, the VM does not. A character whose
-/// lowercase form has a different length (such as `İ`) is kept unchanged, so
-/// indexes into the folded string are indexes into [text]. Final sigma `ς`
-/// folds to `σ` so both spellings match each other.
-String _fold(String text) {
-  var ascii = true;
-  for (var i = 0; i < text.length; i++) {
-    if (text.codeUnitAt(i) > 0x7F) {
-      ascii = false;
-      break;
+/// The result has the length of [text], so its indexes are indexes into
+/// [text], except when [text] contains U+1DF95, which folds to one code
+/// unit instead of two; [_toOriginalIndexes] translates indexes then.
+String _fold(String text) => foldCase(text);
+
+/// For [text] and its [folded] form of a different length, the index into
+/// [text] of every index into [folded], including `folded.length`.
+///
+/// Folding maps each code point on its own, so walking both strings code
+/// point by code point pairs their boundaries. An index inside a folded
+/// surrogate pair maps to the same offset inside the original code point.
+List<int> _toOriginalIndexes(String text, String folded) {
+  final indexes = List<int>.filled(folded.length + 1, text.length);
+  var original = 0;
+  var index = 0;
+  while (original < text.length) {
+    final unit = text.codeUnitAt(original);
+    var width = 1;
+    var codePoint = unit;
+    if (unit & 0xFC00 == 0xD800 && original + 1 < text.length) {
+      final low = text.codeUnitAt(original + 1);
+      if (low & 0xFC00 == 0xDC00) {
+        codePoint = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
+        width = 2;
+      }
     }
+    final foldedWidth = foldCodePoint(codePoint) > 0xFFFF ? 2 : 1;
+    for (var k = 0; k < foldedWidth; k++) {
+      indexes[index + k] = original + (k < width ? k : width - 1);
+    }
+    index += foldedWidth;
+    original += width;
   }
-  if (ascii) return text.toLowerCase();
-  final buffer = StringBuffer();
-  for (final rune in text.runes) {
-    if (rune < 0x80) {
-      buffer.writeCharCode(rune >= 0x41 && rune <= 0x5A ? rune + 0x20 : rune);
-      continue;
-    }
-    if (rune == 0x3C2) {
-      buffer.writeCharCode(0x3C3);
-      continue;
-    }
-    final char = String.fromCharCode(rune);
-    final lower = char.toLowerCase();
-    buffer.write(lower.length == char.length ? lower : char);
-  }
-  return buffer.toString();
+  return indexes;
 }
 
 /// Whether [unit] is whitespace by the definition of [String.trim].

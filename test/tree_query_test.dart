@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:directory_tree/directory_tree.dart';
+import 'package:directory_tree/src/path/case_folding.dart';
 import 'package:test/test.dart';
 
 typedef Range = ({int start, int end});
@@ -188,12 +189,18 @@ void main() {
       });
     });
 
-    test('folds non-ASCII letters per character on every platform', () {
+    test('folds with simple case folding, the same on every platform', () {
+      // Each expectation below failed on at least one platform while the
+      // fold used String.toLowerCase: the VM and the web disagree on İ,
+      // Cherokee, and Georgian Mtavruli, and neither folds the micro sign.
       final unicode = DirectoryTree<Never>.build(const [
         TreeEntry.file('/u/Ärger.txt'),
         TreeEntry.file('/u/ΟΔΟΣ.md'),
         TreeEntry.file('/u/odoς.md'),
         TreeEntry.file('/u/İstanbul.txt'),
+        TreeEntry.file('/u/\u13A0\u13A1.txt'), // Cherokee uppercase
+        TreeEntry.file('/u/\u1C90.txt'), // Georgian Mtavruli
+        TreeEntry.file('/u/\u00B5s.txt'), // micro sign
         TreeEntry.file('/u/😀smile.txt'),
       ]);
       Set<String> names(String query) => {
@@ -205,9 +212,16 @@ void main() {
       expect(names('οδος'), {'ΟΔΟΣ.md'});
       // Final sigma and sigma fold together in both directions.
       expect(names('odoσ'), {'odoς.md'});
-      // İ lowercases to two code units, so it is kept as is.
+      // İ has no simple case folding: it matches only itself.
       expect(names('İstan'), {'İstanbul.txt'});
+      expect(names('istan'), isEmpty);
       expect(names('stanbul'), {'İstanbul.txt'});
+      // Cherokee lowercase folds to uppercase, Mtavruli to Mkhedruli, and
+      // the micro sign to the Greek mu.
+      expect(names('\uAB70\uAB71'), {'\u13A0\u13A1.txt'});
+      expect(names('\u13A0\uAB71'), {'\u13A0\u13A1.txt'});
+      expect(names('\u10D0'), {'\u1C90.txt'});
+      expect(names('\u03BCS'), {'\u00B5s.txt'});
       expect(names('?smile.txt'), {'😀smile.txt'});
       expect(names('😀*'), {'😀smile.txt'});
     });
@@ -795,12 +809,16 @@ void main() {
 
   group('optimized matcher', () {
     // Letters chosen to hit every fold path: ASCII of both cases, Latin-1,
-    // the Kelvin sign (folds to ASCII 'k'), dotted capital I (kept because
-    // its lowercase is longer), Greek sigmas, an astral emoji, and the
-    // characters around A-Z.
+    // the Kelvin sign (folds to ASCII 'k'), dotted capital I (no simple
+    // folding), Greek sigmas, foldings that toLowerCase does not apply,
+    // a length-changing folding, an astral emoji, and the characters
+    // around A-Z.
     const letters = [
       'a', 'A', 'b', 'B', 'k', 'K', '\u212A', 'i', 'I', 'İ', //
-      'ä', 'Ä', 'σ', 'Σ', 'ς', 'ß', //
+      'ä', 'Ä', 'σ', 'Σ', 'ς', 'ß', '\u1E9E', //
+      // Cherokee upper and lower case, the micro sign and mu, and the
+      // ligature that folds from two code units to one (to ß).
+      '\u13A0', '\uAB70', '\u00B5', '\u03BC', '\u{1DF95}', //
       '\u{1F600}', '_', '-', '.', 'x', 'X', ' ', //
       // The edges of the A-Z fold range.
       '@', 'Z', '[', '`', 'z', '{',
@@ -1089,9 +1107,10 @@ String _show(String text) =>
 
 // ---------------------------------------------------------------------------
 // Oracle: TreeQuery as of commit 25f9c0d, before matches became
-// allocation-free. Copied verbatim except for the class name, imports, and
-// doc comments; the property test above checks the optimized matcher
-// against it.
+// allocation-free. Copied verbatim except for the class name, imports, doc
+// comments, and the changes marked "Changed from 25f9c0d" (the shared case
+// folding, which can shorten text); the property tests above check the
+// optimized matcher against it.
 // ---------------------------------------------------------------------------
 
 final class OldTreeQuery extends TreeFilter {
@@ -1141,13 +1160,22 @@ final class OldTreeQuery extends TreeFilter {
     if (_highlights.isEmpty || text.isEmpty) {
       return const <({int start, int end})>[];
     }
-    final haystack = caseSensitive ? text : _fold(text);
+    // Changed from 25f9c0d: a brute force over every span of whole code
+    // points of [text], so ranges are in code units of [text] even where
+    // folding shortens it, independently of how TreeQuery maps indexes.
+    final boundaries = <int>[0];
+    for (final rune in text.runes) {
+      boundaries.add(boundaries.last + (rune > 0xFFFF ? 2 : 1));
+    }
     final found = <({int start, int end})>[];
     for (final needle in _highlights) {
-      var index = haystack.indexOf(needle);
-      while (index >= 0) {
-        found.add((start: index, end: index + needle.length));
-        index = haystack.indexOf(needle, index + 1);
+      for (var s = 0; s < boundaries.length; s++) {
+        for (var e = s + 1; e < boundaries.length; e++) {
+          final span = text.substring(boundaries[s], boundaries[e]);
+          if ((caseSensitive ? span : _fold(span)) == needle) {
+            found.add((start: boundaries[s], end: boundaries[e]));
+          }
+        }
       }
     }
     if (found.isEmpty) return const <({int start, int end})>[];
@@ -1208,9 +1236,11 @@ final class _Subject {
       ? node.path.toString()
       : _fold(node.path.toString());
 
+  // Changed from 25f9c0d: the folded name's length, because folding can
+  // shorten text (U+1DF95), so the original name's length can miss.
   late final int nameStart = node.path.segments.isEmpty
       ? 0
-      : path.length - node.path.segments.last.length;
+      : path.length - name.length;
 
   List<int> tailRunes(int count) {
     var start = 0;
@@ -1535,31 +1565,10 @@ bool _globMatches(List<int> pattern, List<int> name) {
   return p == pattern.length;
 }
 
-String _fold(String text) {
-  var ascii = true;
-  for (var i = 0; i < text.length; i++) {
-    if (text.codeUnitAt(i) > 0x7F) {
-      ascii = false;
-      break;
-    }
-  }
-  if (ascii) return text.toLowerCase();
-  final buffer = StringBuffer();
-  for (final rune in text.runes) {
-    if (rune < 0x80) {
-      buffer.writeCharCode(rune >= 0x41 && rune <= 0x5A ? rune + 0x20 : rune);
-      continue;
-    }
-    if (rune == 0x3C2) {
-      buffer.writeCharCode(0x3C3);
-      continue;
-    }
-    final char = String.fromCharCode(rune);
-    final lower = char.toLowerCase();
-    buffer.write(lower.length == char.length ? lower : char);
-  }
-  return buffer.toString();
-}
+// Changed from 25f9c0d: the oracle folds with the package's shared table,
+// as TreeQuery does, instead of the platform's per-character toLowerCase,
+// which differs between the VM and the web.
+String _fold(String text) => foldCase(text);
 
 bool _isWhitespace(int unit) {
   if (unit <= 0x20) {
