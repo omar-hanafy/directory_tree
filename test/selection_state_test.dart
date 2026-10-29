@@ -603,13 +603,34 @@ void main() {
       }
     });
 
-    test('single mode with two distinct ids throws ArgumentError', () {
+    test('single mode with two distinct ids throws FormatException', () {
+      final json = <String, Object?>{
+        'mode': 'single',
+        'selected': ['/a', '/b'],
+        'anchor': null,
+      };
       expect(
-        () => SelectionState.fromJson({
-          'mode': 'single',
-          'selected': ['/a', '/b'],
-          'anchor': null,
-        }),
+        () => SelectionState.fromJson(json),
+        throwsA(
+          isA<FormatException>()
+              .having((error) => error.message, 'message', contains('single'))
+              .having((error) => error.source, 'source', ['/a', '/b']),
+        ),
+      );
+      // Code that restores persisted state and catches FormatException
+      // recovers from this case like every other malformed input.
+      SelectionState restore(Map<String, Object?> json) {
+        try {
+          return SelectionState.fromJson(json);
+        } on FormatException {
+          return const SelectionState.empty();
+        }
+      }
+
+      expect(restore(json), const SelectionState.empty());
+      // The constructor still throws ArgumentError.
+      expect(
+        () => SelectionState(selected: [NodeId('/a'), NodeId('/b')]),
         throwsArgumentError,
       );
       expect(

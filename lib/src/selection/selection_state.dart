@@ -103,10 +103,11 @@ final class SelectionState {
   /// wrapped in [NodeId] as they are; they are not validated against any
   /// tree.
   ///
-  /// Throws a [FormatException] when a key is missing or has the wrong type,
-  /// or `'mode'` names an unknown mode. Throws an [ArgumentError] when the
-  /// mode is single and more than one distinct id is listed, as the
-  /// [SelectionState.new] constructor does.
+  /// Throws a [FormatException] for every content error: a key is missing
+  /// or has the wrong type, `'mode'` names an unknown mode, or the mode is
+  /// single and more than one distinct id is listed (the case for which the
+  /// [SelectionState.new] constructor throws an [ArgumentError]). So code
+  /// that restores persisted state needs to catch only [FormatException].
   factory SelectionState.fromJson(Map<String, Object?> json) {
     final modeName = json['mode'];
     // Plain == comparisons instead of a switch with string patterns: dart2wasm
@@ -139,6 +140,13 @@ final class SelectionState {
         );
       }
       selected.add(NodeId(value));
+    }
+    if (mode == SelectionMode.single && selected.toSet().length > 1) {
+      throw FormatException(
+        "SelectionState JSON 'selected' must hold at most one distinct id "
+        "in 'single' mode",
+        selectedJson,
+      );
     }
     final anchorJson = json['anchor'];
     if (anchorJson != null && anchorJson is! String) {
