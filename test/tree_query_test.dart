@@ -569,6 +569,45 @@ void main() {
       ]);
     });
 
+    test('path-root nodes are all name for terms with a separator', () {
+      final roots = DirectoryTree<Never>.build(const [
+        TreeEntry.file('/a/x.txt'),
+        TreeEntry.file(r'C:\b\y.txt'),
+        TreeEntry.file(r'\\srv\share\c\z.txt'),
+      ], options: const TreeOptions(roots: TreeRoots.filesystem()));
+      expect(
+        roots.nodes.where((node) => node.path.isRoot).map((n) => n.name),
+        unorderedEquals(['/', 'C:', '//srv/share']),
+      );
+      final cases = <String, Set<String>>{
+        // An occurrence that starts at the first character of a path root
+        // reaches its name, whatever the root's shape.
+        'c:/': {'C:/', 'C:/b'},
+        'C:/B': {'C:/b'},
+        '//srv/': {'//srv/share/'},
+        '//srv/share/': {'//srv/share/', '//srv/share/c'},
+        'srv/share': {'//srv/share/'},
+        // A separator alone reaches every name after a separator, and the
+        // POSIX root, whose name is the separator.
+        '/': {
+          '/',
+          '/a',
+          '/a/x.txt',
+          'C:/',
+          'C:/b',
+          'C:/b/y.txt',
+          '//srv/share/',
+          '//srv/share/c',
+          '//srv/share/c/z.txt',
+        },
+      };
+      for (final MapEntry(key: query, value: expected) in cases.entries) {
+        expect(paths(roots, query), expected, reason: query);
+      }
+      expect(paths(roots, 'C:/', caseSensitive: true), {'C:/', 'C:/b'});
+      expect(paths(roots, 'c:/', caseSensitive: true), isEmpty);
+    });
+
     test('typing a path character by character never empties the view', () {
       final typed = DirectoryTree<Never>.build(const [
         TreeEntry.file('/r/lib/src/a.dart'),

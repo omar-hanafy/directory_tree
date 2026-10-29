@@ -236,14 +236,16 @@ final class TreeQuery extends TreeFilter {
                   ? _lastIndexOfAscii(fullPath, segment)
                   : (foldedPath ??= _fold(fullPath)).lastIndexOf(segment);
             }
-            // The canonical string ends with the last segment, and a path
-            // root is all name. Folding keeps the length, so this indexes
-            // the folded path too. The last occurrence ends furthest right,
-            // so it reaches the name if any occurrence does.
-            final segments = node.path.segments;
-            final nameStart = segments.isEmpty
+            // The canonical string ends with the last segment, which is the
+            // name, and a path root is all name. Folding keeps the length,
+            // so this indexes the folded path too. The last occurrence ends
+            // furthest right, so it reaches the name if any occurrence
+            // does. Reading the name instead of `path.segments` matters:
+            // a node path builds and keeps its O(depth) segment list on
+            // first access.
+            final nameStart = node.path.isRoot
                 ? 0
-                : fullPath.length - segments.last.length;
+                : fullPath.length - name.length;
             hit = index >= 0 && index + segment.length >= nameStart;
           }
         case _PathTerm():
