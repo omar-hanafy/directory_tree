@@ -65,6 +65,24 @@ void main() {
     test('a test that accepts everything still does not report matchesAll', () {
       expect(TreeFilter.where<Object?>((node) => true).matchesAll, isFalse);
     });
+
+    test('equality needs the same test and the same type argument', () {
+      bool test(TreeNode<Object?> node) => node.isFile;
+      final any = TreeFilter.where<Object?>(test);
+      final strings = TreeFilter.where<String>(test);
+      // The filters answer differently for an int tree, so they must not be
+      // equal in either direction.
+      expect(any.matches(file), isTrue);
+      expect(strings.matches(file), isFalse);
+      expect(any == strings, isFalse);
+      expect(strings == any, isFalse);
+
+      expect(TreeFilter.where<String>(test), strings);
+      expect(TreeFilter.where<String>(test).hashCode, strings.hashCode);
+      expect(TreeFilter.where<Object?>(test), any);
+      expect(TreeFilter.where<Object?>(test).hashCode, any.hashCode);
+      expect(TreeFilter.where<Object?>((node) => node.isFile), isNot(any));
+    });
   });
 
   group('TreeFilter.all', () {

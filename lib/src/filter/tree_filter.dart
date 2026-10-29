@@ -39,6 +39,11 @@ abstract class TreeFilter {
   /// `DirectoryTree<String>`. Use `TreeFilter.where<Object?>` to accept
   /// every tree. The filter never reports [matchesAll], even if [test]
   /// accepts everything.
+  ///
+  /// Two `where` filters are equal when they have the same type argument
+  /// and equal [test] functions (pass the same function object, such as a
+  /// top-level tear-off, for equal filters); `where<Object?>(f)` and
+  /// `where<String>(f)` are not equal in either direction.
   static TreeFilter where<T>(bool Function(TreeNode<T> node) test) =>
       _WhereFilter<T>(test);
 
@@ -98,12 +103,30 @@ final class _WhereFilter<T> extends TreeFilter {
   @override
   bool matches(TreeNode<Object?> node) => node is TreeNode<T> && test(node);
 
+  /// The type argument, so [operator ==] can compare it exactly.
+  Type get _nodeType => T;
+
+  /// Whether [function] equals [test]. Takes an [Object] because reading
+  /// [test] through a `_WhereFilter<Object?>` view of a `_WhereFilter<T>`
+  /// would fail its covariance check.
+  bool _hasTest(Object function) => test == function;
+
+  /// Whether [other] is a [TreeFilter.where] filter with the same type
+  /// argument and an equal [test].
+  ///
+  /// The type arguments must be equal, not merely related: the same
+  /// function wrapped by `where<Object?>` and `where<String>` matches
+  /// different nodes, and `is _WhereFilter<T>` alone would make the
+  /// comparison asymmetric.
   @override
   bool operator ==(Object other) =>
-      identical(this, other) || other is _WhereFilter<T> && other.test == test;
+      identical(this, other) ||
+      other is _WhereFilter<Object?> &&
+          other._nodeType == T &&
+          other._hasTest(test);
 
   @override
-  int get hashCode => test.hashCode;
+  int get hashCode => Object.hash(_WhereFilter, T, test);
 
   @override
   String toString() => 'TreeFilter.where(...)';
