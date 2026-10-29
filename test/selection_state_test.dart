@@ -762,6 +762,19 @@ void main() {
       );
     });
 
+    test('single mode: toggling twice does not restore a replaced leaf', () {
+      // Checking c replaces x (single mode keeps one id); unchecking c then
+      // leaves nothing, so the original {x} is not restored.
+      final state = const SelectionState.empty().select(x);
+      final once = state.toggleCheck(tree, c);
+      expect(once.selected, {c});
+      final twice = once.toggleCheck(tree, c);
+      expect(twice.selected, isEmpty);
+      expect(twice, isNot(state));
+      // Toggling the selected leaf itself twice does restore it.
+      expect(state.toggleCheck(tree, x).toggleCheck(tree, x), state);
+    });
+
     test('single mode: one-leaf subtrees check, larger ones throw', () {
       const state = SelectionState.empty();
       expect(state.check(tree, x).selected, {x});

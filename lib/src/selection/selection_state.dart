@@ -515,9 +515,12 @@ final class SelectionState {
   /// [uncheck]s [id] when it is [CheckState.checked], otherwise [check]s it
   /// (a click on a checkbox).
   ///
-  /// So a partial directory becomes checked. Toggling twice restores the
-  /// selection when [id] started checked or unchecked. Returns this state
-  /// for ids not in [tree]. Runs in O(length + subtree size).
+  /// So a partial directory becomes checked. In [SelectionMode.multiple],
+  /// toggling twice restores the selection when [id] started checked or
+  /// unchecked. In [SelectionMode.single] it need not: checking [id]
+  /// replaces the selected id, so toggling an unchecked leaf twice ends with
+  /// nothing selected. Returns this state for ids not in [tree]. Runs in
+  /// O(length + subtree size).
   ///
   /// Throws a [StateError] in [SelectionMode.single] when the subtree of
   /// [id] has more than one leaf, as [check] does; ask [canCheck] first.
