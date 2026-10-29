@@ -156,9 +156,66 @@ String renderTree<T>(
   return buffer.toString();
 }
 
-/// [TreeRow.label], plus `/` for directories unless the label already ends
-/// with one (the POSIX root `/`).
+/// [TreeRow.label] with control characters escaped (see [_escapeLabel]),
+/// plus `/` for directories unless the label already ends with one (the
+/// POSIX root `/`).
 String _defaultLabel(TreeRow<Object?> row) {
-  final text = row.label;
+  final text = _escapeLabel(row.label);
   return row.node.isDirectory && !text.endsWith('/') ? '$text/' : text;
 }
+
+/// [label] with every character that could break a line or drive a
+/// terminal replaced by a visible escape; [label] itself when it has none.
+///
+/// File names may contain any character except `/` and NUL, so a scanned
+/// directory can hold a name with a line break (which would split one row
+/// over two lines) or an ESC sequence (which a terminal would execute, for
+/// example to recolor text or move the cursor). The escapes are those of C
+/// string literals and `ls --quoting-style=escape`:
+///
+/// * `\n`, `\r`, and `\t` for line feed, carriage return, and tab;
+/// * `\xHH` (two uppercase hex digits) for the other C0 controls U+0000 to
+///   U+001F, for DEL U+007F, and for the C1 controls U+0080 to U+009F,
+///   such as `\x1B` for ESC and `\x9B` for CSI;
+/// * `\u2028` and `\u2029` for the Unicode line and paragraph separators;
+/// * `\\` for a backslash, so an escape in the output always stands for one
+///   character: the name `a\nb` (with a backslash) renders as `a\\nb`, a
+///   name with a line feed as `a\nb`.
+///
+/// Every other character, including non-ASCII letters, is kept as is. Runs
+/// in O(length of [label]); returns [label] without copying when nothing
+/// needs escaping.
+String _escapeLabel(String label) {
+  var index = 0;
+  while (index < label.length && !_needsEscape(label.codeUnitAt(index))) {
+    index++;
+  }
+  if (index == label.length) return label;
+  final buffer = StringBuffer(label.substring(0, index));
+  for (; index < label.length; index++) {
+    final unit = label.codeUnitAt(index);
+    if (!_needsEscape(unit)) {
+      buffer.writeCharCode(unit);
+      continue;
+    }
+    buffer.write(switch (unit) {
+      0x0A => r'\n',
+      0x0D => r'\r',
+      0x09 => r'\t',
+      0x5C => r'\\',
+      0x2028 => r'\u2028',
+      0x2029 => r'\u2029',
+      _ => '\\x${unit.toRadixString(16).toUpperCase().padLeft(2, '0')}',
+    });
+  }
+  return buffer.toString();
+}
+
+/// Whether [_escapeLabel] replaces the UTF-16 code unit [unit]. Surrogates
+/// never match, so a character outside the BMP is copied unit by unit.
+bool _needsEscape(int unit) =>
+    unit < 0x20 ||
+    (unit >= 0x7F && unit <= 0x9F) ||
+    unit == 0x5C ||
+    unit == 0x2028 ||
+    unit == 0x2029;

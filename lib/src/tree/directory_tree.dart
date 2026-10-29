@@ -470,9 +470,20 @@ final class DirectoryTree<T> {
   ///   (the top-level nodes, or their children when [showRoots] is false),
   ///   `null` (the default) has no limit, and a negative value prints
   ///   nothing. The remaining rows keep their connectors.
-  /// * [label] returns the text of each row; by default [TreeRow.label],
-  ///   followed by `/` for directories unless the label already ends with
-  ///   `/` (as the POSIX root `/` does).
+  /// * [label] returns the text of each row. By default it is
+  ///   [TreeRow.label] with control characters escaped, followed by `/`
+  ///   for directories unless the label already ends with `/` (as the
+  ///   POSIX root `/` does). The escapes keep every row on one line and
+  ///   keep a name from an untrusted directory from sending terminal
+  ///   control sequences: line feed, carriage return, and tab become `\n`,
+  ///   `\r`, and `\t`; the other C0 controls (U+0000 to U+001F), DEL
+  ///   (U+007F), and the C1 controls (U+0080 to U+009F) become `\xHH` with
+  ///   two uppercase hex digits, such as `\x1B` for ESC; the line and
+  ///   paragraph separators U+2028 and U+2029 become `\u2028` and `\u2029`;
+  ///   and a backslash becomes `\\`, so every escape stands for exactly one
+  ///   character. All other characters are kept. The text a [label]
+  ///   callback returns is written as is: the callback owns escaping, and a
+  ///   line break it returns splits the row.
   ///
   /// Lines are joined with `\n`, without a trailing newline; an empty tree
   /// renders as the empty string. Runs in O(n) with a filter (one filter

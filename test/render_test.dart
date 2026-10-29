@@ -366,6 +366,91 @@ void main() {
     });
   });
 
+  group('control characters in names', () {
+    // Names a scanned, untrusted directory can contain: line breaks that
+    // would split a row over several lines, and ESC and CSI sequences that
+    // a terminal would execute.
+    final hostile = DirectoryTree.fromPaths([
+      '/r/line\nbreak.txt',
+      '/r/tab\there.txt',
+      '/r/carriage\rreturn.txt',
+      '/r/\x1B[31mred\x1B[0m.txt',
+      '/r/bell\x07del\x7Fnel\x85csi\x9B.txt',
+      '/r/sep\u2028line\u2029para.txt',
+      '/r/esc\x1Bdir/inner\x01dir/f.txt',
+    ]);
+
+    test('every row stays on one line', () {
+      for (final compactFolders in const [false, true]) {
+        final rows = hostile.flatten(compactFolders: compactFolders);
+        final text = hostile.render(compactFolders: compactFolders);
+        expect(
+          text.split('\n'),
+          hasLength(rows.length),
+          reason: 'compactFolders $compactFolders',
+        );
+        for (final unit in text.codeUnits) {
+          final control =
+              (unit < 0x20 && unit != 0x0A) ||
+              (unit >= 0x7F && unit <= 0x9F) ||
+              unit == 0x2028 ||
+              unit == 0x2029;
+          expect(control, isFalse, reason: 'U+${unit.toRadixString(16)}');
+        }
+      }
+    });
+
+    test('the default label escapes them', () {
+      expect(
+        hostile.render(),
+        lines([
+          r'r/',
+          r'├── esc\x1Bdir/',
+          r'│   └── inner\x01dir/',
+          r'│       └── f.txt',
+          r'├── \x1B[31mred\x1B[0m.txt',
+          r'├── bell\x07del\x7Fnel\x85csi\x9B.txt',
+          r'├── carriage\rreturn.txt',
+          r'├── line\nbreak.txt',
+          r'├── sep\u2028line\u2029para.txt',
+          r'└── tab\there.txt',
+        ]),
+      );
+      expect(
+        hostile.render(compactFolders: true, maxDepth: 1),
+        contains(r'├── esc\x1Bdir/inner\x01dir/'),
+      );
+    });
+
+    test('a backslash in a name is escaped so escapes stay unambiguous', () {
+      const posix = TreeOptions(paths: PathPolicy(backslashIsSeparator: false));
+      final names = DirectoryTree.fromPaths([
+        r'/r/back\slash.txt',
+        r'/r/not\na-newline.txt',
+      ], options: posix);
+      expect(
+        names.render(),
+        lines([r'r/', r'├── back\\slash.txt', r'└── not\\na-newline.txt']),
+      );
+    });
+
+    test('plain names, including non-ASCII ones, are unchanged', () {
+      final plain = DirectoryTree.fromPaths(['/r/café/日本.txt', '/r/a b.txt']);
+      expect(
+        plain.render(),
+        lines(['r/', '├── café/', '│   └── 日本.txt', '└── a b.txt']),
+      );
+    });
+
+    test('rows and a label callback get the raw names', () {
+      final rows = hostile.flatten();
+      expect(rows.map((row) => row.label), contains('line\nbreak.txt'));
+      final raw = hostile.render(label: (row) => row.label);
+      expect(raw, contains('line\nbreak.txt'));
+      expect(raw.split('\n'), hasLength(rows.length + 1));
+    });
+  });
+
   group('hidden roots', () {
     test('a single root: its children start at the left margin', () {
       final repo = DirectoryTree.fromPaths([
