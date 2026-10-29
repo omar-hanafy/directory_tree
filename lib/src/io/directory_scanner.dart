@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:io';
 
 import 'package:directory_tree/src/io/extended_length_path.dart';
+import 'package:directory_tree/src/io/host_path.dart';
 import 'package:directory_tree/src/path/path_policy.dart';
 import 'package:directory_tree/src/tree/directory_tree.dart';
 import 'package:directory_tree/src/tree/tree_entry.dart';
@@ -313,6 +314,13 @@ final class DirectoryScanner {
   /// [DirectoryTree.options] show the policy actually used; it equals
   /// [options] only when [options] already followed the host rule.
   ///
+  /// Two more spellings follow the host on Linux and macOS, where a leading
+  /// `//` means `/` and `C:` is an ordinary name, while path parsing reads
+  /// them as a UNC root and a drive. There this method scans `//x` as `/x`,
+  /// and a relative [path] whose first segment is a drive spec, such as `C:`
+  /// or `c:/x`, as `./C:` or `./c:/x`, so the tree keeps a single top-level
+  /// node and stays relative; the entries' paths use that spelling.
+  ///
   /// Completes with the same errors as [scan].
   Future<DirectoryTree<FileSystemEntity>> scanTree(
     String path, {
@@ -339,16 +347,21 @@ final class DirectoryScanner {
     );
   }
 
-  /// The path [scanTree] scans for [path]: [path] itself when the effective
-  /// policy of [options] can parse it, and its absolute form when only that
-  /// parses (a relative path escaping its start).
+  /// The path [scanTree] scans for [path]: [path] itself, respelled off
+  /// Windows by [posixTreeSpelling], when the effective policy of [options]
+  /// can parse it, and its absolute form when only that parses (a relative
+  /// path escaping its start).
   ///
   /// An empty path stays empty so [scan] still reports it as missing rather
   /// than scanning the current directory, and a path that is invalid in both
   /// forms (a NUL character) is kept so [scan] reports the caller's spelling.
   static String _treePath(String path, TreeOptions options) {
-    if (path.isEmpty || options.paths.tryParse(path) != null) return path;
-    final absolute = Directory(path).absolute.path;
+    if (path.isEmpty) return path;
+    String host(String path) =>
+        Platform.isWindows ? path : posixTreeSpelling(path);
+    final spelled = host(path);
+    if (options.paths.tryParse(spelled) != null) return spelled;
+    final absolute = host(Directory(path).absolute.path);
     return options.paths.tryParse(absolute) == null ? path : absolute;
   }
 

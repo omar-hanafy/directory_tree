@@ -199,7 +199,8 @@ the new tree's pre-order, `removed` in the old tree's; `isEmpty`.
   unchanged directory is identical every run.
 - Paths are exactly what `dart:io` reports: the scan path as given plus
   the platform separator and names. `scanTree` makes a relative path that
-  climbs above its start (`..`, `../project`) absolute first; `scan` and
+  climbs above its start (`..`, `../project`) absolute first, and on Linux
+  and macOS scans `//x` as `/x` and a relative `C:` as `./C:`; `scan` and
   `scanSync` never rewrite paths.
 - With `followLinks: true`, links to directories are entered and reported
   as directories, links to files as files; broken links and links that

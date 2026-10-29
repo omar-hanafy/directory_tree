@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:directory_tree/directory_tree.dart';
 import 'package:directory_tree/io.dart';
 import 'package:directory_tree/src/io/extended_length_path.dart';
+import 'package:directory_tree/src/io/host_path.dart';
 import 'package:test/test.dart';
 
 /// Every scan result, described relative to [base] as `kind:path:Data`, so
@@ -637,6 +638,42 @@ void main() {
       expect(root.isExplicit, isTrue);
       expect(root.data, isA<Directory>());
       expect(root.data!.path, base.path);
+    });
+
+    test(
+      'reads a leading // as / on Linux and macOS',
+      () async {
+        // Parsing reads `//var/...` as a UNC share root; the host reads `/`.
+        final tree = await const DirectoryScanner().scanTree('/${base.path}');
+        expect(tree.issues, isEmpty);
+        final root = tree.rootNodes.single;
+        expect(root.path, TreePath.parse(base.path));
+        expect(root.data!.path, base.path);
+      },
+      skip: Platform.isWindows
+          ? 'a leading // is a UNC root on Windows'
+          : false,
+    );
+
+    test('POSIX spellings are respelled for the host reading', () {
+      expect(posixTreeSpelling('//x/y'), '/x/y');
+      expect(posixTreeSpelling('//'), '/');
+      expect(posixTreeSpelling('///x'), '///x');
+      expect(posixTreeSpelling('/x'), '/x');
+      expect(posixTreeSpelling('C:'), './C:');
+      expect(posixTreeSpelling('c:/x'), './c:/x');
+      expect(posixTreeSpelling('C:x'), 'C:x');
+      expect(posixTreeSpelling(r'C:\x'), r'C:\x');
+      expect(posixTreeSpelling('x/C:'), 'x/C:');
+      expect(posixTreeSpelling('\u212A:'), '\u212A:');
+      expect(posixTreeSpelling(''), '');
+      // Each result parses to the location Linux and macOS read.
+      const policy = PathPolicy(backslashIsSeparator: false);
+      expect(policy.parse(posixTreeSpelling('//x/y')), policy.parse('/x/y'));
+      expect(policy.parse(posixTreeSpelling('//')), policy.parse('/'));
+      final drive = policy.parse(posixTreeSpelling('C:/x'));
+      expect(drive.isAbsolute, isFalse);
+      expect(drive.segments, ['C:', 'x']);
     });
 
     test('contains a node for every scanned entry, with its data', () async {
