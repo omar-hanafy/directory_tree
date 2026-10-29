@@ -74,8 +74,10 @@ import 'package:meta/meta.dart';
 /// mappings with status C and S of CaseFolding.txt, pinned to Unicode
 /// 18.0.0 and applied one code point at a time by the package's own table,
 /// the same folding as a case-insensitive `PathPolicy`. Results are
-/// identical on the VM, JavaScript, and WebAssembly; the platform's
-/// [String.toLowerCase] is never used. Consequences:
+/// identical on the VM, JavaScript, and WebAssembly. The platform's
+/// [String.toLowerCase] never decides a result: it only builds the folded
+/// copy of ASCII-only text, where every platform maps exactly `A`-`Z` to
+/// `a`-`z`. Consequences:
 ///
 /// * `Σ`, `σ`, and the final sigma `ς` all fold to `σ`, so `οδος` matches
 ///   `ΟΔΟΣ`.
@@ -666,12 +668,15 @@ final class _Parser {
     if (value.isEmpty) return null;
     switch (key) {
       case 'ext':
+        // The set drops repeats in O(1) each, so a long list parses in
+        // linear time; the list keeps the first occurrence's order.
+        final seen = <String>{};
         final suffixes = <String>[];
         for (var part in value.split(',')) {
           if (part.startsWith('.')) part = part.substring(1);
           if (part.isEmpty) continue;
           final suffix = '.${_fold(part)}';
-          if (!suffixes.contains(suffix)) suffixes.add(suffix);
+          if (seen.add(suffix)) suffixes.add(suffix);
         }
         if (suffixes.isEmpty) return null;
         return _ExtTerm(List<String>.unmodifiable(suffixes), negated: negated);

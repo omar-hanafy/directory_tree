@@ -449,6 +449,42 @@ void main() {
         }
       }
     });
+
+    test('ext: drops repeated extensions and keeps the rest', () {
+      // Spellings that fold to one suffix count once; the others stay.
+      expect(run('ext:MD,md,.md,Txt,md,.TXT'), {
+        'README.md',
+        'My Notes.txt',
+        'weird!name.txt',
+        'foo:bar.txt',
+      });
+      expect(
+        run('!ext:dart,DART,gz,dart'),
+        allNames.difference({...dartFiles, 'archive.tar.gz'}),
+      );
+    });
+
+    test('ext: with many distinct values parses in linear time', () {
+      // A quadratic duplicate check takes about 12 s on the VM for 100,000
+      // values; a linear one takes milliseconds on every platform.
+      final values = [for (var i = 0; i < 100000; i++) 'e$i'];
+      final stopwatch = Stopwatch()..start();
+      final query = TreeQuery.parse('ext:${values.join(',')},md,E5');
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)));
+      final listing = DirectoryTree<Never>.build(const [
+        TreeEntry.file('/q/a.e5'),
+        TreeEntry.file('/q/b.E99999'),
+        TreeEntry.file('/q/c.md'),
+        TreeEntry.file('/q/d.e100000'),
+      ]);
+      expect(
+        [
+          for (final node in listing.nodes)
+            if (query.matches(node)) node.name,
+        ],
+        ['a.e5', 'b.E99999', 'c.md'],
+      );
+    }, timeout: const Timeout(Duration(seconds: 60)));
   });
 
   group('terms with a separator', () {
