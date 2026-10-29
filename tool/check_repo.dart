@@ -330,12 +330,25 @@ bool _listsPart(
 
 void _checkDeprecations(String version, List<_Source> sources) {
   final major = int.tryParse(version.split('.').first);
-  final removal = RegExp(r'removed in (\d+)\.0\.0');
+  // "Removed in 3.0.0" may open the message, so case does not matter.
+  final removal = RegExp(r'removed in (\d+)\.0\.0', caseSensitive: false);
   for (final source in sources) {
     final tokens = source.tokens;
     for (var i = 0; i + 1 < tokens.length; i++) {
       if (!tokens[i].isSymbol('@')) continue;
-      final name = tokens[i + 1];
+      var name = tokens[i + 1];
+      var arguments = i + 2;
+      // An import prefix, as in `@core.Deprecated(...)`, comes first.
+      if (i + 3 < tokens.length &&
+          name.kind == _TokenKind.word &&
+          !name.isWord('Deprecated') &&
+          !name.isWord('deprecated') &&
+          tokens[i + 2].isSymbol('.') &&
+          (tokens[i + 3].isWord('Deprecated') ||
+              tokens[i + 3].isWord('deprecated'))) {
+        name = tokens[i + 3];
+        arguments = i + 4;
+      }
       if (name.isWord('deprecated')) {
         _errors.add(
           '${source.where(tokens[i])}: use @Deprecated("... removed in '
@@ -345,7 +358,9 @@ void _checkDeprecations(String version, List<_Source> sources) {
         final where = source.where(tokens[i]);
         // Only this annotation's own message counts, however many lines or
         // adjacent string literals it spans, and whatever follows it.
-        final target = removal.firstMatch(_deprecationMessage(tokens, i + 2));
+        final target = removal.firstMatch(
+          _deprecationMessage(tokens, arguments),
+        );
         final removedIn = int.tryParse(target?[1] ?? '');
         if (target == null) {
           _errors.add('$where: @Deprecated must say "removed in X.0.0".');
