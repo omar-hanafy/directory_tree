@@ -57,6 +57,9 @@ final textFiles = TreeFilter.where<Object?>(
   (node) => node.name.endsWith('.txt'),
 );
 
+/// Options with the single fixed root `/r`.
+const fixedR = TreeOptions(roots: TreeRoots.fixed(['/r']));
+
 void main() {
   final tree = sampleTree();
 
@@ -225,6 +228,32 @@ void main() {
         expect(chained.indexOfNode(NodeId(path)), 0, reason: path);
       }
       expect(chained.indexOfNode(const NodeId('/p/a/b/c/f.txt')), 1);
+    });
+
+    test('a compacted row finds the directories it shows that the filter '
+        'hides', () {
+      // src neither matches nor contains a match, yet the row lib/src shows
+      // it, because compaction follows the tree, not the filter.
+      final workspace = DirectoryTree.fromPaths([
+        '/r/lib/src/x.txt',
+        '/r/other.md',
+      ], options: fixedR);
+      final lib = workspace.idOf('/r/lib')!;
+      final src = workspace.idOf('/r/lib/src')!;
+      final libOnly = TreeFilter.where<Object?>((node) => node.name == 'lib');
+      final compacted = workspace.flatten(
+        filter: libOnly,
+        compactFolders: true,
+      );
+      expect(table(compacted), ['r|0|ECL-|', 'lib/src|1|E-LM|0']);
+      expect(compacted.indexOfNode(lib), 1);
+      expect(compacted.indexOfNode(src), 1);
+      expect(compacted.rowOf(src)!.id, src);
+      // Without compaction the filter hides src.
+      final plain = workspace.flatten(filter: libOnly);
+      expect(table(plain), ['r|0|ECL-|', 'lib|1|E-LM|0']);
+      expect(plain.indexOfNode(src), -1);
+      expect(plain.rowOf(src), isNull);
     });
 
     test('parentIndexOf and firstChildIndexOf', () {
@@ -417,6 +446,47 @@ void main() {
         intermediate.collapseNode(b).expansion,
         ExpansionState.withCollapsed([b, c]),
       );
+    });
+
+    test('a hidden chain member acts on the deepest directory too', () {
+      final chained = DirectoryTree.fromPaths([
+        '/r/lib/src/utils/a.dart',
+        '/r/README.md',
+      ], options: fixedR);
+      NodeId at(String path) => chained.idOf(path)!;
+      final root = at('/r');
+      final lib = at('/r/lib');
+      final src = at('/r/lib/src');
+      final utils = at('/r/lib/src/utils');
+      final rows = chained.flatten(
+        expansion: const ExpansionState.collapsed(),
+        compactFolders: true,
+      );
+      expect(table(rows), ['r|0|-CLM|']);
+      // The order of the two updates does not matter.
+      final visibleFirst = rows.toggleNode(root).expandNode(src);
+      final hiddenFirst = rows.expandNode(src).toggleNode(root);
+      const expected = [
+        'r|0|ECLM|',
+        'lib/src/utils|1|EC-M|0',
+        'a.dart|2|--LM|01',
+        'README.md|1|--LM|0',
+      ];
+      expect(table(visibleFirst), expected);
+      expect(table(hiddenFirst), expected);
+      expect(hiddenFirst.expansion, ExpansionState.withExpanded([root, utils]));
+      expect(hiddenFirst.requestedExpansion, hiddenFirst.expansion);
+      // While hidden, every chain member acts on utils, and the rows stay.
+      final expanded = rows.expandNode(lib);
+      expect(expanded.expansion, ExpansionState.withExpanded([utils]));
+      expectAllRowsReused(rows, expanded, 'expandNode(lib)');
+      expect(rows.toggleNode(src).expansion, expanded.expansion);
+      expect(identical(expanded.expandNode(src), expanded), isTrue);
+      expect(expanded.toggleNode(lib).expansion, rows.expansion);
+      expect(expanded.collapseNode(src).expansion, rows.expansion);
+      // An intermediate directory's own state is never written.
+      final own = rows.withExpansion(ExpansionState.withExpanded([src]));
+      expect(identical(own.collapseNode(src).expansion, own.expansion), true);
     });
 
     test('revealed matches can be collapsed and expanded again', () {
@@ -665,6 +735,53 @@ void main() {
       expect(identical(searched.requestedExpansion, searched.expansion), true);
     });
 
+    test('stays one object when the reveal would only touch states that '
+        'are never consulted', () {
+      // A hidden root counts as expanded whatever the state says.
+      final hiddenRoot = DirectoryTree.fromPaths([
+        '/r/lib/a.dart',
+        '/r/b.txt',
+      ], options: fixedR);
+      final rows = hiddenRoot.flatten(
+        expansion: const ExpansionState.collapsed(),
+        filter: TreeFilter.where<Object?>((node) => node.name == 'b.txt'),
+        showRoots: false,
+      );
+      expect(table(rows), ['b.txt|0|--LM|']);
+      expect(rows.expansion, const ExpansionState.collapsed());
+      expect(identical(rows.requestedExpansion, rows.expansion), isTrue);
+      // A directory that continues a compacted chain is never consulted:
+      // the row a/b expands as b.
+      final chain = DirectoryTree.fromPaths([
+        '/r/a/b/x.txt',
+        '/r/a/b/y.txt',
+        '/r/q.txt',
+      ], options: fixedR);
+      final opened = ExpansionState.withExpanded([
+        chain.idOf('/r')!,
+        chain.idOf('/r/a/b')!,
+      ]);
+      final chained = chain.flatten(
+        expansion: opened,
+        filter: TreeFilter.where<Object?>((node) => node.name == 'x.txt'),
+        compactFolders: true,
+      );
+      expect(table(chained), ['r|0|ECL-|', 'a/b|1|ECL-|0', 'x.txt|2|--LM|00']);
+      expect(identical(chained.expansion, opened), isTrue);
+      expect(identical(chained.requestedExpansion, opened), isTrue);
+      // withExpansion with revealMatches agrees.
+      expect(
+        identical(
+          rows.withExpansion(
+            const ExpansionState.collapsed(),
+            revealMatches: true,
+          ),
+          rows,
+        ),
+        isTrue,
+      );
+    });
+
     test('a search reveals folders only in the effective state', () {
       final rows = tree.flatten(
         expansion: const ExpansionState.collapsed(),
@@ -703,10 +820,13 @@ void main() {
         compactFolders: true,
       );
       expect(describe(rows.rowOf(b)!), 'b/c|1|EC--|0');
+      // The search reveals c, the row's node, but not b, whose state the
+      // row b/c never consults.
+      expect(rows.expansion, ExpansionState.withExpanded([r, a, c]));
       final expanded = rows.expandNode(b);
       expect(expanded.requestedExpansion, ExpansionState.withExpanded([c]));
       final collapsed = rows.collapseNode(b);
-      expect(collapsed.expansion, ExpansionState.withExpanded([r, a, b]));
+      expect(collapsed.expansion, ExpansionState.withExpanded([r, a]));
       expect(collapsed.requestedExpansion, const ExpansionState.collapsed());
     });
 
@@ -903,6 +1023,35 @@ void main() {
       expect(file.rowOf(at('/p/a/b/c/d'))!.isExpanded, isFalse);
     });
 
+    test('a chain member the filter hides is revealed through its chain', () {
+      final chain = DirectoryTree.fromPaths([
+        '/r/p/x/b/c.txt',
+        '/r/q.txt',
+      ], options: fixedR);
+      NodeId at(String path) => chain.idOf(path)!;
+      final b = at('/r/p/x/b');
+      final rows = chain.flatten(
+        expansion: const ExpansionState.collapsed(),
+        filter: TreeFilter.where<Object?>((node) => node.name == 'x'),
+        expandMatches: false,
+        compactFolders: true,
+      );
+      expect(table(rows), ['r|0|-CL-|']);
+      expect(rows.indexOfNode(b), -1);
+      // b does not pass the filter, but the row p/x/b shows it once /r is
+      // open, so revealing b opens /r, as revealing the match x does.
+      final revealed = rows.reveal(b);
+      expect(identical(revealed, rows), isFalse);
+      expect(table(revealed), ['r|0|ECL-|', 'p/x/b|1|--LM|0']);
+      expect(revealed.expansion, ExpansionState.withExpanded([at('/r')]));
+      expect(revealed.requestedExpansion, revealed.expansion);
+      expect(revealed.indexOfNode(b), 1);
+      expect(rows.reveal(at('/r/p/x')), revealed);
+      expect(identical(revealed.reveal(b), revealed), isTrue);
+      // The file below the chain stays hidden: no row can show it.
+      expect(identical(rows.reveal(at('/r/p/x/b/c.txt')), rows), isTrue);
+    });
+
     test('applies to both states during a search', () {
       final rows = tree.flatten(
         expansion: const ExpansionState.collapsed(),
@@ -1017,7 +1166,18 @@ void main() {
                 showRoots: showRoots,
               );
               expect(rows.requestedExpansion, initial);
-              if (filter == null || !expandMatches) {
+              if (filter == null ||
+                  !expandMatches ||
+                  matchesVisible(
+                    tree.flatten(
+                      expansion: initial,
+                      filter: filter,
+                      expandMatches: false,
+                      compactFolders: compactFolders,
+                      showRoots: showRoots,
+                    ),
+                  )) {
+                // Nothing to reveal: the two states are one object.
                 expect(
                   identical(rows.requestedExpansion, rows.expansion),
                   true,
@@ -1143,7 +1303,10 @@ void main() {
           'reveal of a visible node',
           'reveal of a chain member',
           'reveal of a filtered node',
+          'reveal of a filtered chain member',
           'reveal of a hidden root',
+          'hidden chain member',
+          'hidden chain member with filter',
         ]),
       );
     });
@@ -1175,7 +1338,11 @@ const operationNames = [
   if (node == null || (node.isRoot && !before.showRoots)) return null;
   if (operation == 3) {
     if (before.indexOfNode(id) >= 0) return null;
-    if (!passesFilter(before.filter, tree, node)) return null;
+    // A compacted chain shows when its first node passes the filter, even
+    // where a deeper member does not.
+    if (!passesFilter(before.filter, tree, chainHead(before, node))) {
+      return null;
+    }
     return (
       ids: [
         for (final ancestor in tree.ancestorsOf(id))
@@ -1187,8 +1354,12 @@ const operationNames = [
     );
   }
   if (node.isFile) return null;
+  // Visible or not, an id acts on the deepest directory of its chain.
+  final target = chainEnd(before, node).id;
   final index = before.indexOfNode(id);
-  final target = index < 0 ? id : before[index].id;
+  if (index >= 0 && before[index].id != target) {
+    throw StateError('the row of $id does not show $target');
+  }
   final wanted = switch (operation) {
     0 => true,
     1 => false,
@@ -1217,6 +1388,32 @@ bool continuesChain(TreeRows<Object?> rows, TreeNode<Object?> node) {
     return false;
   }
   return rows.tree[node.children.single]!.isDirectory;
+}
+
+/// The deepest directory of the compacted chain that [node] belongs to:
+/// [node] unless it continues a chain.
+TreeNode<Object?> chainEnd(TreeRows<Object?> rows, TreeNode<Object?> node) {
+  var end = node;
+  while (continuesChain(rows, end)) {
+    end = rows.tree.childrenOf(end.id).single;
+  }
+  return end;
+}
+
+/// The first node of the compacted chain that [node] belongs to: the node
+/// the row that shows [node] starts with. Chains never include a hidden
+/// root.
+TreeNode<Object?> chainHead(TreeRows<Object?> rows, TreeNode<Object?> node) {
+  var head = node;
+  for (;;) {
+    final parent = rows.tree.parentOf(head.id);
+    if (parent == null ||
+        (parent.isRoot && !rows.showRoots) ||
+        !continuesChain(rows, parent)) {
+      return head;
+    }
+    head = parent;
+  }
 }
 
 ExpansionState applyChange(
@@ -1398,6 +1595,19 @@ void expectLookups(TreeRows<Object?> rows, String reason) {
   expect(problems, isEmpty, reason: reason);
 }
 
+/// Whether every match of the filter of [rows] that can have a row (all
+/// but hidden roots) is visible, so revealing the matches changes nothing.
+bool matchesVisible(TreeRows<Object?> rows) {
+  final filter = rows.filter;
+  if (filter == null) return true;
+  for (final node in rows.tree.nodes) {
+    if (!filter.matches(node)) continue;
+    if (node.isRoot && !rows.showRoots) continue;
+    if (rows.indexOfNode(node.id) < 0) return false;
+  }
+  return true;
+}
+
 /// The kinds of update that [before] -> [after] exercised.
 Set<String> classify(
   TreeRows<Object?> before,
@@ -1426,6 +1636,11 @@ Set<String> classify(
   }
   if (!before.showRoots) kinds.add('update with hidden roots');
   final index = before.indexOfNode(id);
+  if (index < 0 && continuesChain(before, node)) {
+    kinds.add(
+      filtered ? 'hidden chain member with filter' : 'hidden chain member',
+    );
+  }
   if (index < 0) {
     final ancestorsExpanded = before.tree
         .ancestorsOf(id)
@@ -1464,6 +1679,8 @@ Set<String> classifyReveal(
   if (identical(after, before)) return {'reveal of a filtered node'};
   return {
     'reveal',
+    if (!passesFilter(before.filter, before.tree, node))
+      'reveal of a filtered chain member',
     if (!before.showRoots) 'reveal under hidden roots',
     if (before.compactFolders) 'reveal with compact folders',
   };
@@ -1559,6 +1776,16 @@ NodeId pickId(
   if (roll == 1) return tree.roots[random.nextInt(tree.roots.length)];
   if (roll < 4 && files.isNotEmpty) {
     return files[random.nextInt(files.length)].id;
+  }
+  if (roll < 6 && rows.compactFolders) {
+    // A directory that continues a chain, whether or not its row shows.
+    final members = [
+      for (final directory in directories)
+        if (continuesChain(rows, directory)) directory,
+    ];
+    if (members.isNotEmpty) {
+      return members[random.nextInt(members.length)].id;
+    }
   }
   if (roll < 8 && rows.isNotEmpty) {
     final chained = [

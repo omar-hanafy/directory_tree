@@ -324,11 +324,15 @@ final class _ExpandedLastRow<T> extends TreeRow<T> {
 /// With a [filter], a node is visible only when it or a descendant matches;
 /// [TreeRow.isMatch] tells which. Rows created with `expandMatches: true`
 /// (the [DirectoryTree.flatten] default) have every ancestor of a match
-/// added to [expansion], so the matches are visible and can still be
-/// collapsed one by one. With [compactFolders], a directory that has exactly
-/// one child, which is itself a directory, shares a row with that child, as
-/// in the compact folders of VS Code. Compaction depends only on the tree's
-/// structure, not on the filter.
+/// whose state a row consults added to [expansion], so the matches are
+/// visible and can still be collapsed one by one. With [compactFolders], a
+/// directory that has exactly one child, which is itself a directory,
+/// shares a row with that child, as in the compact folders of VS Code.
+/// Compaction depends only on the tree's structure, not on the filter, so a
+/// visible compacted row can also show directories that neither match nor
+/// contain a match: with the filter `name == 'lib'`, the row `lib/src`
+/// shows `src`. Such a directory counts as visible wherever its row does:
+/// [indexOfNode] finds it, and [reveal] reveals it.
 ///
 /// ## Two expansion states
 ///
@@ -338,7 +342,9 @@ final class _ExpandedLastRow<T> extends TreeRow<T> {
 /// [reveal]. Draw from the rows (or [expansion]); persist
 /// [requestedExpansion], so a saved view does not reopen every folder a
 /// search opened. The two are the same object until a filter reveals
-/// something.
+/// something: until revealing a match expands a directory whose state a
+/// row consults (never a hidden root, and never a directory that continues
+/// a compacted chain).
 ///
 /// ## Hidden roots
 ///
@@ -346,10 +352,11 @@ final class _ExpandedLastRow<T> extends TreeRow<T> {
 /// expanded whatever [expansion] says. Their visible children are the
 /// depth-0 rows, in root order and then child order, and all depth-0 rows
 /// are siblings for [TreeRow.isLast] and [TreeRow.guides], as if the roots
-/// did not exist. A top-level id has no row ([indexOfNode] returns -1), and
-/// [expandNode], [collapseNode], and [toggleNode] ignore it. Compacted
-/// chains start below the roots. Use it for an explorer of one folder,
-/// whose name is a title rather than a row.
+/// did not exist. A top-level id has no row ([indexOfNode] returns -1),
+/// [expandNode], [collapseNode], and [toggleNode] ignore it, and neither
+/// [reveal] nor `expandMatches` adds it to a state. Compacted chains start
+/// below the roots. Use it for an explorer of one folder, whose name is a
+/// title rather than a row.
 ///
 /// ## Incremental updates
 ///
@@ -386,9 +393,12 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   ///
   /// When the rows were created with a filter and `expandMatches: true`
   /// (or by [withExpansion] with `revealMatches: true`), this is
-  /// [requestedExpansion] with every ancestor of a match expanded; otherwise
-  /// it is [requestedExpansion] itself. [TreeRow.isExpanded] reads it, and
-  /// [toggleNode] decides from it.
+  /// [requestedExpansion] with every ancestor of a match expanded, except
+  /// the ancestors whose state no row consults: hidden roots (when
+  /// [showRoots] is false) and directories that continue a compacted chain
+  /// (when [compactFolders] is true). Otherwise it is [requestedExpansion]
+  /// itself. [TreeRow.isExpanded] reads it, and [toggleNode] decides from
+  /// it.
   ///
   /// Do not persist it: it contains the folders a search revealed, so a
   /// view restored from it reopens all of them. Persist
@@ -403,7 +413,9 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// [toggleNode], and [reveal] applied to it exactly as they are applied
   /// to [expansion]. Equals [expansion] (it is the same object) when
   /// nothing was revealed: without a filter, with `expandMatches: false`,
-  /// or when every match was already visible.
+  /// or when every match was already visible (also when a hidden root or a
+  /// compacted chain member above a match is collapsed in the state, since
+  /// revealing never touches those).
   ///
   /// This is the value to persist, for example with
   /// [ExpansionState.toJson]: restoring it after the search is cleared
@@ -518,8 +530,14 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// A node that [compactFolders] merged into a row (an intermediate
   /// directory such as `src` in `lib/src/utils`) is found at that row.
   /// Returns -1 for unknown ids, for nodes inside collapsed directories, and
-  /// for nodes the filter hides. Runs in O(log rows): one hash lookup, then
-  /// a binary search over the rows' pre-order positions.
+  /// for nodes the filter hides, except a directory that a visible
+  /// compacted row shows: compaction follows the tree, not the filter, so
+  /// with the filter `name == 'lib'` the row `lib/src` is found for `src`
+  /// too, although `src` neither matches nor contains a match (without
+  /// [compactFolders], `src` has no row and this returns -1). Runs in
+  /// O(log rows + length of the found row's chain): one hash lookup, a
+  /// binary search over the rows' pre-order positions, then a walk along
+  /// the found row's compacted chain.
   int indexOfNode(NodeId id) {
     final position = _source.tree.indexOf(id);
     return position < 0 ? -1 : _indexAt(position);
@@ -528,9 +546,11 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// The row that shows the node [id], or `null` when that node is not
   /// visible.
   ///
-  /// Same lookup as [indexOfNode], in O(log rows). For an intermediate
-  /// directory of a compacted row this returns that row, whose [TreeRow.id]
-  /// is the deepest directory of the chain, not [id].
+  /// Same lookup as [indexOfNode], with its complexity and its exception
+  /// for directories that a visible compacted row shows although the filter
+  /// hides them. For an intermediate directory of a compacted row this
+  /// returns that row, whose [TreeRow.id] is the deepest directory of the
+  /// chain, not [id].
   TreeRow<T>? rowOf(NodeId id) {
     final index = indexOfNode(id);
     return index < 0 ? null : _rows[index]!;
@@ -542,7 +562,7 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// The parent row is the nearest visible ancestor: the row that shows the
   /// parent of the row's first chain node. Use it for the left arrow key.
   /// Throws a [RangeError] when [index] is out of range. Runs in
-  /// O(log rows).
+  /// O(log rows + chain length), like [indexOfNode].
   int? parentIndexOf(int index) {
     final parent = _rows[index]!._parent;
     return parent == null ? null : _indexAt(parent._start);
@@ -564,25 +584,33 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
 
   /// Returns rows in which the directory [id] is expanded.
   ///
-  /// When [id] is shown by a row (directly or as an intermediate directory
-  /// of a compacted row), the row's [TreeRow.node] is expanded and its newly
-  /// visible descendants are inserted right after it; every other row is
-  /// the identical object as before. When [id] is a directory that is not
-  /// visible (inside a collapsed directory, or hidden by the filter), only
-  /// the expansion states change and the rows stay the same.
+  /// The directory that expands is the target of [id]: [id] itself, or,
+  /// when [compactFolders] puts [id] in a chain as an intermediate
+  /// directory (one whose only child is a directory, such as `src` in
+  /// `lib/src/utils`), the deepest directory of that chain, which is the
+  /// [TreeRow.node] of the row that shows or would show it. The target
+  /// comes from the tree structure, so it is the same whether or not the
+  /// row is visible, and the order of updates never matters. When the
+  /// target's row is visible, it is expanded and its newly visible
+  /// descendants are inserted right after it; every other row is the
+  /// identical object as before. When it is not visible (inside a
+  /// collapsed directory, or hidden by the filter), only the expansion
+  /// states change and the rows stay the same.
   ///
-  /// The same directory (the row's node for an id inside a compacted row)
-  /// is expanded in both [expansion] and [requestedExpansion], so expanding
-  /// a folder that a filter revealed keeps the rows and records the choice
-  /// in [requestedExpansion]. Returns these rows when [id] is unknown, is a
-  /// file, is a top-level node while [showRoots] is false (hidden roots
-  /// always count as expanded), or is already expanded in both states.
+  /// The target is expanded in both [expansion] and [requestedExpansion],
+  /// so expanding a folder that a filter revealed keeps the rows and
+  /// records the choice in [requestedExpansion]. Returns these rows when
+  /// [id] is unknown, is a file, is a top-level node while [showRoots] is
+  /// false (hidden roots always count as expanded), or its target is
+  /// already expanded in both states.
   ///
   /// The result equals `tree.flatten(expansion: result.expansion, filter:
   /// filter, expandMatches: false, compactFolders: compactFolders,
   /// showRoots: showRoots)`. Runs in O(log rows + inserted rows) node visits
-  /// without calling the filter, plus copying the row list and the
-  /// expansion states.
+  /// (a compacted row counts the nodes of its chain), plus, when [id] is
+  /// not visible, the length of the compacted chain below it, without
+  /// calling the filter, plus copying the row list and the expansion
+  /// states.
   ///
   /// (Named `expandNode` rather than `expand` because a [List] already has
   /// [Iterable.expand].)
@@ -591,22 +619,25 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
 
   /// Returns rows in which the directory [id] is collapsed.
   ///
-  /// When [id] is shown by a row (directly or as an intermediate directory
-  /// of a compacted row), the row's [TreeRow.node] is collapsed and the
-  /// contiguous block of its descendant rows is removed; every other row is
-  /// the identical object as before. Descendants keep their own expansion,
-  /// so expanding again restores them. When [id] is a directory that is not
-  /// visible, only the expansion states change.
+  /// The directory that collapses is the target of [id], as in
+  /// [expandNode]: [id] itself, or the deepest directory of the compacted
+  /// chain that [id] is an intermediate directory of, whether or not its
+  /// row is visible. When the target's row is visible, it is collapsed and
+  /// the contiguous block of its descendant rows is removed; every other
+  /// row is the identical object as before. Descendants keep their own
+  /// expansion, so expanding again restores them. When it is not visible,
+  /// only the expansion states change.
   ///
-  /// The same directory is collapsed in both [expansion] and
-  /// [requestedExpansion]. Returns these rows when [id] is unknown, is a
-  /// file, is a top-level node while [showRoots] is false (hidden roots
-  /// cannot be collapsed), or is already collapsed in both states.
+  /// The target is collapsed in both [expansion] and [requestedExpansion].
+  /// Returns these rows when [id] is unknown, is a file, is a top-level
+  /// node while [showRoots] is false (hidden roots cannot be collapsed), or
+  /// its target is already collapsed in both states.
   ///
   /// The result equals `tree.flatten(expansion: result.expansion, filter:
   /// filter, expandMatches: false, compactFolders: compactFolders,
-  /// showRoots: showRoots)`. Runs in O(log rows) node visits without calling
-  /// the filter, plus copying the row list and the expansion states.
+  /// showRoots: showRoots)`. Runs in O(log rows + chain length) node visits
+  /// without calling the filter, plus copying the row list and the
+  /// expansion states.
   @useResult
   TreeRows<T> collapseNode(NodeId id) => _update(id, expand: false);
 
@@ -617,10 +648,11 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// This is the click handler of an expand arrow: it decides from what the
   /// rows show ([expansion], which includes the folders a filter revealed)
   /// and applies the result to both [expansion] and [requestedExpansion].
-  /// For an id inside a visible compacted row, the state that flips is the
-  /// state of the row's [TreeRow.node]. Returns these rows when [id] is
-  /// unknown, is a file, or is a top-level node while [showRoots] is false.
-  /// Same complexity as [expandNode] and [collapseNode].
+  /// The state that is read and flipped is that of the target of [id], as
+  /// in [expandNode]: for an intermediate directory of a compacted chain,
+  /// visible or not, the chain's deepest directory. Returns these rows when
+  /// [id] is unknown, is a file, or is a top-level node while [showRoots]
+  /// is false. Same complexity as [expandNode] and [collapseNode].
   @useResult
   TreeRows<T> toggleNode(NodeId id) => _update(id, expand: null);
 
@@ -637,10 +669,16 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// expanding the ancestors one by one with [expandNode], it never opens a
   /// compacted row that already shows the node.
   ///
+  /// A directory that the filter hides but that a compacted row would show
+  /// (compaction follows the tree, so with the filter `name == 'x'` the row
+  /// `p/x/b` shows `b`) is revealed through its chain: the chain's
+  /// ancestors are expanded, exactly as for revealing `x`.
+  ///
   /// Returns these rows when [id] is unknown, when the node is already
   /// visible (also as an intermediate directory of a visible compacted
-  /// row), when the filter hides the node (no expansion would show it), and
-  /// for top-level nodes while [showRoots] is false. Otherwise the topmost
+  /// row), when the filter hides the node and no compacted row would show
+  /// it (no expansion would show it), and for top-level nodes while
+  /// [showRoots] is false. Otherwise the topmost
   /// collapsed ancestor's row expands and the newly visible rows are
   /// inserted after it, as with [expandNode]; every other row is the
   /// identical object as before.
@@ -657,11 +695,17 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
     if (position < 0 || _indexAt(position) >= 0) return this;
     final node = tree.nodes[position];
     // A top-level node that is not visible is a hidden root (showRoots is
-    // false), which never has a row.
-    if (node.isRoot || !_source.passesFilter(position)) return this;
+    // false), which never has a row. A compacted chain is visible exactly
+    // when its first node passes the filter, so a chain member the filter
+    // hides is still revealed when its chain can show.
+    if (node.isRoot || !_source.passesFilter(_source.chainHead(position))) {
+      return this;
+    }
     // The ancestors whose own state decides visibility, and the topmost of
-    // them that is collapsed now. Every ancestor passes the filter, because
-    // the node does, so that ancestor's row is visible.
+    // them that is collapsed now. Every ancestor of the chain's first node
+    // passes the filter, because that node does, so that ancestor's row is
+    // visible; the chain members above the node are skipped, as their
+    // state is never consulted.
     final deciding = <NodeId>[];
     TreeNode<T>? topmostCollapsed;
     for (final ancestor in tree.ancestorsOf(id)) {
@@ -686,9 +730,10 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// [compactFolders], and [showRoots].
   ///
   /// [expansion] becomes [requestedExpansion]. With [revealMatches] and an
-  /// active [filter], every ancestor of a match is expanded on top of it
-  /// for [TreeRows.expansion], as `expandMatches` does in
-  /// [DirectoryTree.flatten]; without (the default), [expansion] is used as
+  /// active [filter], every ancestor of a match whose state a row consults
+  /// is expanded on top of it for [TreeRows.expansion], as `expandMatches`
+  /// does in [DirectoryTree.flatten] (see [TreeRows.expansion]); without
+  /// (the default), [expansion] is used as
   /// given, so during a search a collapsed state shows only the top-level
   /// rows. Use it to apply a state built elsewhere, such as
   /// [ExpansionState.expandSubtree] or a state restored from JSON.
@@ -731,10 +776,15 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
     // Hidden roots have no row and always count as expanded.
     if (!node.isDirectory || (node.isRoot && !_source.showRoots)) return this;
     final index = _indexAt(position);
-    // An id shown by a row (also inside a compacted row) acts on the row's
-    // node, in both states; a hidden directory acts on itself.
+    // An id acts on the deepest directory of its compacted chain (itself
+    // when it is not in one), in both states: for a visible id that is the
+    // node of the row that shows it, and a hidden id is mapped the same way
+    // from the tree, so the result does not depend on whether the row was
+    // visible at the time.
     final row = index < 0 ? null : _rows[index]!;
-    final target = row == null ? id : row.node.id;
+    final target = row == null
+        ? tree.nodes[_source.chainEnd(position)].id
+        : row.node.id;
     final expanded = expand ?? !expansion.isExpanded(target);
     final nextExpansion = expansion.setExpanded(target, expanded: expanded);
     final nextRequested = identical(requestedExpansion, expansion)
@@ -1029,8 +1079,15 @@ final class _RowSource<T> {
   final Int32List? _firstVisibleChild;
   final Int32List? _nextVisibleSibling;
 
-  /// [expansion] with every ancestor of a filter match expanded; [expansion]
-  /// itself without a filter or when nothing changes.
+  /// [expansion] with every ancestor of a filter match whose state decides
+  /// visibility expanded; [expansion] itself without a filter or when
+  /// nothing changes.
+  ///
+  /// Hidden roots (when [showRoots] is false) and directories that continue
+  /// a compacted chain are left alone: their state is never consulted, so
+  /// adding them would make [TreeRows.expansion] differ from
+  /// [TreeRows.requestedExpansion] without changing a single row. Those are
+  /// the ancestors [TreeRows.reveal] skips too.
   ExpansionState revealMatches(ExpansionState expansion) {
     final firstVisibleChild = _firstVisibleChild;
     if (firstVisibleChild == null) return expansion;
@@ -1040,8 +1097,12 @@ final class _RowSource<T> {
     List<NodeId>? closed;
     for (var index = 0; index < firstVisibleChild.length; index++) {
       if (firstVisibleChild[index] < 0) continue;
-      final id = nodes[index].id;
-      if (!expansion.isExpanded(id)) (closed ??= <NodeId>[]).add(id);
+      final node = nodes[index];
+      if (!showRoots && node.isRoot) continue;
+      if (continuesChainAt(index)) continue;
+      if (!expansion.isExpanded(node.id)) {
+        (closed ??= <NodeId>[]).add(node.id);
+      }
     }
     return closed == null ? expansion : expansion.expandAll(closed);
   }
@@ -1207,6 +1268,42 @@ final class _RowSource<T> {
       return false;
     }
     return tree[node.children.first]?.isDirectory ?? false;
+  }
+
+  /// [continuesChain] for the node at [position], in O(1) without a hash
+  /// lookup: a directory's only child directly follows it in pre-order.
+  bool continuesChainAt(int position) {
+    if (!compactFolders) return false;
+    final node = nodes[position];
+    return node is DirectoryNode<T> &&
+        node.children.length == 1 &&
+        nodes[position + 1].isDirectory;
+  }
+
+  /// The position of the first node of the compacted chain that contains
+  /// the node at [position]: the start of the row that shows that node, or
+  /// would show it once its ancestors are expanded. [position] itself
+  /// without [compactFolders] or when the node starts its own row.
+  ///
+  /// Chains never include a hidden root (when [showRoots] is false). Runs
+  /// in O(number of chain members above [position]).
+  int chainHead(int position) {
+    if (!compactFolders) return position;
+    var head = position;
+    while (head > 0) {
+      final parent = head - 1;
+      final parentNode = nodes[parent];
+      // The node directly before in pre-order is the parent exactly when
+      // it is one level up; continuesChainAt then means the node is its
+      // only child and a directory.
+      if (parentNode.depth != nodes[head].depth - 1 ||
+          !continuesChainAt(parent) ||
+          (!showRoots && parentNode.isRoot)) {
+        break;
+      }
+      head = parent;
+    }
+    return head;
   }
 
   /// [TreeRow.hasChildren] of the row that starts at [start] and shows

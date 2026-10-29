@@ -687,15 +687,11 @@ void main() {
         'c|1|ECL-|0',
         'z.txt|2|--LM|00',
       ]);
-      // Revealing adds every ancestor of a match, roots included.
+      // Revealing adds the ancestors of the matches, but not the hidden
+      // roots: they count as expanded whatever the state says.
       expect(
         rows.expansion,
-        ExpansionState.withExpanded([
-          id('/other'),
-          id('/r'),
-          id('/r/b'),
-          id('/r/b/c'),
-        ]),
+        ExpansionState.withExpanded([id('/r/b'), id('/r/b/c')]),
       );
       // A root that only matches itself shows nothing once hidden.
       final rootOnly = nameFilter((name) => name == 'r');
@@ -800,10 +796,11 @@ typedef ExpectedRow = ({
 });
 
 /// Flattens by the definitions in the contract, recursively and naively:
-/// visibility by scanning descendants, revealing by [ExpansionState.reveal],
-/// chains by [DirectoryTree.childrenOf]. With [showRoots] false the depth-0
-/// candidates are the children of every root, in root order, as one sibling
-/// list.
+/// visibility by scanning descendants, revealing by expanding the ancestors
+/// of each match whose state is consulted (not hidden roots, not directories
+/// that continue a compacted chain), chains by [DirectoryTree.childrenOf].
+/// With [showRoots] false the depth-0 candidates are the children of every
+/// root, in root order, as one sibling list.
 ({List<ExpectedRow> rows, ExpansionState expansion}) oracleFlatten(
   DirectoryTree<Object?> tree, {
   required ExpansionState expansion,
@@ -819,10 +816,23 @@ typedef ExpectedRow = ({
       active == null ||
       matches(node) ||
       tree.descendantsOf(node.id).any(matches);
+  // Whether the state of [node] is ever consulted: not for a hidden root
+  // (it counts as expanded), and not for a directory whose only child is a
+  // directory under compaction (the row expands as its deepest directory).
+  bool consulted(TreeNode<Object?> node) {
+    if (!showRoots && node.isRoot) return false;
+    if (!compactFolders) return true;
+    final children = tree.childrenOf(node.id);
+    return children.length != 1 || !children.single.isDirectory;
+  }
+
   var state = expansion;
   if (active != null && expandMatches) {
     for (final node in tree.nodes) {
-      if (matches(node)) state = state.reveal(tree, node.id);
+      if (!matches(node)) continue;
+      state = state.expandAll(
+        tree.ancestorsOf(node.id).where(consulted).map((node) => node.id),
+      );
     }
   }
   final rows = <ExpectedRow>[];

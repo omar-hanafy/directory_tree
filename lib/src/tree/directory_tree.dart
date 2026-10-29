@@ -356,12 +356,19 @@ final class DirectoryTree<T> {
   /// * [expansion] decides which directories show their children. Defaults
   ///   to every directory expanded.
   /// * [filter] keeps only the nodes that match it or have a matching
-  ///   descendant; [TreeRow.isMatch] tells the two apart. A `null` filter,
-  ///   or one that reports [TreeFilter.matchesAll] (such as an empty search
+  ///   descendant, plus, with [compactFolders], the directories that a
+  ///   kept row's chain continues into (see [compactFolders]);
+  ///   [TreeRow.isMatch] tells matches from the rest. A `null` filter, or
+  ///   one that reports [TreeFilter.matchesAll] (such as an empty search
   ///   query), shows every node. The filter is called exactly once per node
   ///   and never again by updates of the returned rows.
   /// * [expandMatches] (default true) adds every ancestor of every match to
-  ///   [expansion] before flattening, so all matches are visible. The rows'
+  ///   [expansion] before flattening, so all matches are visible, except
+  ///   the ancestors whose state no row consults: hidden roots (see
+  ///   [showRoots]) and directories that continue a compacted chain (see
+  ///   [compactFolders]). When every match is already visible it adds
+  ///   nothing, and [TreeRows.expansion] and [TreeRows.requestedExpansion]
+  ///   are the same object. The rows'
   ///   [TreeRows.expansion] is that effective state, so the user can still
   ///   collapse revealed directories, and [TreeRows.requestedExpansion] is
   ///   [expansion] without the reveals: persist that one, so restoring the
@@ -370,8 +377,13 @@ final class DirectoryTree<T> {
   ///   collapsed directories stay hidden. Without a filter it has no effect.
   /// * [compactFolders] shows a directory whose only child is a directory on
   ///   one row with that child, repeatedly (`lib/src/utils`), as VS Code
-  ///   does. Compaction follows the tree structure, not the filter; the row
-  ///   expands and collapses as its deepest directory ([TreeRow.node]).
+  ///   does. Compaction follows the tree structure, not the filter, so a
+  ///   row can show a directory the filter would hide: with the filter
+  ///   `name == 'lib'`, the row is `lib/src` although `src` does not match.
+  ///   [TreeRows.indexOfNode] finds such a directory at its row, and
+  ///   [TreeRows.reveal] reveals it. The row expands and collapses as its
+  ///   deepest directory ([TreeRow.node]), and so does every id of the
+  ///   chain, whether or not the row is visible.
   /// * [showRoots] (default true) makes the top-level nodes rows. Set it to
   ///   false for an explorer of one folder whose name is a title rather than
   ///   a row (typically a tree with a single [TreeRoots.fixed] root). Then:
@@ -390,8 +402,8 @@ final class DirectoryTree<T> {
   ///     below the roots.
   ///   * with a [filter], a root never produces a row, even when it
   ///     matches; matches below it show as usual, and [expandMatches] still
-  ///     reveals them (adding their ancestors, roots included, to the
-  ///     state).
+  ///     reveals them (adding their ancestors to the state, but not the
+  ///     roots, which already count as expanded).
   ///
   /// ```dart
   /// final tree = DirectoryTree.fromPaths([
