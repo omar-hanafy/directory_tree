@@ -76,8 +76,8 @@ final class TreeRow<T> {
   /// False for files and empty directories. Under a filter, also false for a
   /// directory none of whose children match or contain a match. Use it to
   /// decide whether to draw an expand arrow. Derived from the tree and the
-  /// filter results of the flatten when read, in O(depth + length of
-  /// [chain]).
+  /// filter results of the flatten when read, in O(depth), plus one hash
+  /// lookup under a filter with [TreeRows.compactFolders].
   bool get hasChildren => _source.hasChildrenAt(_start, node);
 
   /// Whether no later sibling row follows this one under the same parent
@@ -375,7 +375,8 @@ final class _ExpandedLastRow<T> extends TreeRow<T> {
 /// [indexOfNode] finds the row of a node (also when the node is hidden
 /// inside a compacted row), [parentIndexOf] moves to the parent row (left
 /// arrow), and [firstChildIndexOf] to the first child row (right arrow).
-/// Up and down are `index - 1` and `index + 1`.
+/// Up and down are `index - 1` and `index + 1`. All of them run in
+/// O(log rows) or better, however long the compacted chains are.
 final class TreeRows<T> extends ListBase<TreeRow<T>> {
   TreeRows._(this._source, this.expansion, this.requestedExpansion, this._rows);
 
@@ -535,9 +536,10 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// with the filter `name == 'lib'` the row `lib/src` is found for `src`
   /// too, although `src` neither matches nor contains a match (without
   /// [compactFolders], `src` has no row and this returns -1). Runs in
-  /// O(log rows + length of the found row's chain): one hash lookup, a
-  /// binary search over the rows' pre-order positions, then a walk along
-  /// the found row's compacted chain.
+  /// O(log rows), whatever the length of the compacted chains: one hash
+  /// lookup, a binary search over the rows' pre-order positions, and with
+  /// [compactFolders] one more hash lookup for the end of the found row's
+  /// chain.
   int indexOfNode(NodeId id) {
     final position = _source.tree.indexOf(id);
     return position < 0 ? -1 : _indexAt(position);
@@ -546,7 +548,7 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// The row that shows the node [id], or `null` when that node is not
   /// visible.
   ///
-  /// Same lookup as [indexOfNode], with its complexity and its exception
+  /// Same lookup as [indexOfNode], in O(log rows), including its exception
   /// for directories that a visible compacted row shows although the filter
   /// hides them. For an intermediate directory of a compacted row this
   /// returns that row, whose [TreeRow.id] is the deepest directory of the
@@ -562,7 +564,7 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// The parent row is the nearest visible ancestor: the row that shows the
   /// parent of the row's first chain node. Use it for the left arrow key.
   /// Throws a [RangeError] when [index] is out of range. Runs in
-  /// O(log rows + chain length), like [indexOfNode].
+  /// O(log rows), like [indexOfNode].
   int? parentIndexOf(int index) {
     final parent = _rows[index]!._parent;
     return parent == null ? null : _indexAt(parent._start);
@@ -635,9 +637,9 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   ///
   /// The result equals `tree.flatten(expansion: result.expansion, filter:
   /// filter, expandMatches: false, compactFolders: compactFolders,
-  /// showRoots: showRoots)`. Runs in O(log rows + chain length) node visits
-  /// without calling the filter, plus copying the row list and the
-  /// expansion states.
+  /// showRoots: showRoots)`. Runs in O(log rows) node visits (O(log rows +
+  /// chain length below [id]) when [id] is not visible) without calling
+  /// the filter, plus copying the row list and the expansion states.
   @useResult
   TreeRows<T> collapseNode(NodeId id) => _update(id, expand: false);
 
@@ -741,8 +743,10 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   /// Returns these rows when both states are unchanged, and keeps the rows
   /// when only [requestedExpansion] changes. Otherwise recomputes them from
   /// scratch, in O(rows) plus one hash lookup per directory row, and O(n)
-  /// more when revealing. The filter is not called again: the match results
-  /// of the original flatten are reused.
+  /// more when revealing; the row list is allocated in proportion to the
+  /// result, so collapsing a large filtered view to a few rows stays cheap.
+  /// The filter is not called again: the match results of the original
+  /// flatten are reused.
   @useResult
   TreeRows<T> withExpansion(
     ExpansionState expansion, {
@@ -764,7 +768,7 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
       _source,
       effective,
       expansion,
-      _source.buildRows(effective),
+      _source.buildRows(effective, revealed: revealMatches),
     );
   }
 
@@ -838,6 +842,10 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   }
 
   /// The index of the row whose chain covers pre-order [position], or -1.
+  ///
+  /// O(log rows): a binary search for the last row starting at or before
+  /// [position], then one hash lookup for the end of its chain (the
+  /// position of its node), never a walk along the chain.
   int _indexAt(int position) {
     final rows = _rows;
     var low = 0;
@@ -852,7 +860,10 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
         high = middle - 1;
       }
     }
-    return found >= 0 && _source.chainEnd(rows[found]!._start) >= position
+    if (found < 0) return -1;
+    final row = rows[found]!;
+    return row._start == position ||
+            _source.rowEnd(row._start, row.node) >= position
         ? found
         : -1;
   }
@@ -902,7 +913,7 @@ TreeRows<T> flattenTree<T>(
     source,
     effective,
     expansion,
-    source.buildRows(effective),
+    source.buildRows(effective, revealed: expandMatches),
   );
 }
 
@@ -929,7 +940,11 @@ List<TreeRow<T>?> renderRows<T>(
     compactFolders: compactFolders,
     showRoots: showRoots,
   );
-  return source.buildRows(source.revealMatches(expansion), maxDepth: maxDepth);
+  return source.buildRows(
+    source.revealMatches(expansion),
+    maxDepth: maxDepth,
+    revealed: true,
+  );
 }
 
 /// What one flatten computes once and every [TreeRows] derived from it
@@ -1109,13 +1124,21 @@ final class _RowSource<T> {
 
   /// The rows of the whole view, depth-0 rows first, down to [maxDepth].
   ///
-  /// Every element of the result is non-null.
-  List<TreeRow<T>?> buildRows(ExpansionState expansion, {int? maxDepth}) {
+  /// [revealed] tells that [expansion] came from [revealMatches], so every
+  /// node the filter keeps is a row; it only sizes the allocation. Every
+  /// element of the result is non-null.
+  List<TreeRow<T>?> buildRows(
+    ExpansionState expansion, {
+    int? maxDepth,
+    bool revealed = false,
+  }) {
     final rows = <TreeRow<T>?>[];
     // One allocation at an upper bound instead of growth by doubling. The
     // final `length = count` keeps the array when it is mostly used and
     // copies only when the bound overshot by more than three times.
-    final capacity = maxDepth == null ? _capacity(expansion) : 0;
+    final capacity = maxDepth == null
+        ? _capacity(expansion, revealed: revealed)
+        : 0;
     if (capacity > 0) rows.length = capacity;
     final int count;
     if (showRoots) {
@@ -1158,7 +1181,7 @@ final class _RowSource<T> {
     ExpansionState expansion,
     TreeRow<T> row,
   ) {
-    final first = firstChild(chainEnd(row._start));
+    final first = firstChild(rowEnd(row._start, row.node));
     if (first < 0) return;
     final end = _nextVisibleSibling == null ? subtreeEnd(row._start) : 0;
     _emit(out, out.length, expansion, row, first, end, -1, null);
@@ -1167,16 +1190,34 @@ final class _RowSource<T> {
   /// An upper bound on the number of rows for [expansion] that is cheap to
   /// compute and, as far as expansion can tell, at most three times the
   /// actual number, so allocating it never costs more than the walk; 0 when
-  /// there is no such bound.
+  /// there is no such bound (the rows then grow by doubling, in proportion
+  /// to the result).
   ///
-  /// With a filter the bound is the number of visible nodes (the walk is
-  /// O(n) anyway). Without one, it needs a state that expands by default
-  /// with few exceptions: every node is a row except the descendants of the
-  /// collapsed exceptions. Hidden roots and compacted chains lower the
-  /// count further, but those views visit every node they leave out, so the
-  /// bound stays within the cost of the walk.
-  int _capacity(ExpansionState expansion) {
-    if (_firstVisibleChild != null) return _visibleCount;
+  /// With a filter the bound is the number of visible nodes, used only
+  /// when they are all rows: when [revealed] (every ancestor of a match is
+  /// expanded, as `expandMatches` and `revealMatches` do), or when the
+  /// state expands by default and none of its few exceptions is a
+  /// directory with visible children. A collapsed state such as
+  /// `withExpansion(ExpansionState.collapsed())` gets no bound, so a few
+  /// rows never allocate a slot per visible node. Without a filter it needs
+  /// a state that expands by default with few exceptions: every node is a
+  /// row except the descendants of the collapsed exceptions. Hidden roots
+  /// and compacted chains lower the count further, but those views visit
+  /// every node they leave out, so the bound stays within the cost of the
+  /// walk.
+  int _capacity(ExpansionState expansion, {required bool revealed}) {
+    final firstVisibleChild = _firstVisibleChild;
+    if (firstVisibleChild != null) {
+      if (revealed) return _visibleCount;
+      if (!expansion.expandsByDefault) return 0;
+      final exceptions = expansion.exceptions;
+      if (exceptions.length > 64) return 0;
+      for (final id in exceptions) {
+        final position = tree.indexOf(id);
+        if (position >= 0 && firstVisibleChild[position] >= 0) return 0;
+      }
+      return _visibleCount;
+    }
     if (!expansion.expandsByDefault) return 0;
     final exceptions = expansion.exceptions;
     if (exceptions.length > 64) return 0;
@@ -1306,6 +1347,15 @@ final class _RowSource<T> {
     return head;
   }
 
+  /// The position of the deepest node of the row that starts at [start]
+  /// and shows [node] (its [TreeRow.node]).
+  ///
+  /// Equals [chainEnd] of [start], but costs one hash lookup instead of a
+  /// walk along the chain, so lookups stay O(log rows) however long the
+  /// chain is.
+  int rowEnd(int start, TreeNode<T> node) =>
+      compactFolders ? tree.indexOf(node.id) : start;
+
   /// [TreeRow.hasChildren] of the row that starts at [start] and shows
   /// [node].
   bool hasChildrenAt(int start, TreeNode<T> node) {
@@ -1313,7 +1363,7 @@ final class _RowSource<T> {
     if (firstVisibleChild == null) {
       return node is DirectoryNode<T> && node.children.isNotEmpty;
     }
-    return firstVisibleChild[chainEnd(start)] >= 0;
+    return firstVisibleChild[rowEnd(start, node)] >= 0;
   }
 
   /// [TreeRow.isMatch] of the row that starts at [start].
