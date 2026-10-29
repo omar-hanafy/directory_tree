@@ -60,6 +60,37 @@ void main() {
     });
   });
 
+  group('Win32 file namespace prefixes', () {
+    test('name the same node as the path without them', () {
+      final tree = DirectoryTree.fromPaths([
+        r'C:\work\a.txt',
+        r'\\?\c:\work\b.txt',
+        r'\\server\share\c.txt',
+        r'\\?\UNC\server\share\d.txt',
+      ]);
+      expect(tree.rootNodes.map((node) => node.path.toString()), [
+        '//server/share/',
+        'C:/work',
+      ]);
+      expect(tree.fileCount, 4);
+      expect(tree.nodeAt(r'\\?\C:\work\a.txt'), tree.nodeAt('C:/work/a.txt'));
+      expect(
+        tree.idOf(r'\\?\UNC\server\share\c.txt'),
+        tree.idOf(r'\\server\share\c.txt'),
+      );
+    });
+
+    test('are literal when backslash is not a separator', () {
+      const policy = PathPolicy(backslashIsSeparator: false);
+      final windows = policy.parse(r'\\?\C:\x');
+      expect(windows.root, '');
+      expect(windows.segments, [r'\\?\C:\x']);
+      final slashes = policy.parse('//?/C:/x');
+      expect(slashes.root, '//?/C:/');
+      expect(slashes.segments, ['x']);
+    });
+  });
+
   group('backslashIsSeparator: false', () {
     const policy = PathPolicy(backslashIsSeparator: false);
 

@@ -67,6 +67,34 @@ void main() {
       '//Server/Share/A': ('//Server/Share/', ['A'], '//Server/Share/A'),
       '//server/share/..': ('//server/share/', [], '//server/share/'),
       r'\\.\pipe\name': ('//./pipe/', ['name'], '//./pipe/name'),
+      // Win32 file namespace: `\\?\` before a drive or `UNC` names the same
+      // file as the path without it.
+      r'\\?\C:\x': ('C:/', ['x'], 'C:/x'),
+      r'\\?\c:\x\..\y': ('C:/', ['y'], 'C:/y'),
+      r'\\?\C:': ('C:/', [], 'C:/'),
+      r'\\?\C:\': ('C:/', [], 'C:/'),
+      '//?/D:/a/b': ('D:/', ['a', 'b'], 'D:/a/b'),
+      r'\\?\UNC\server\share\x': ('//server/share/', ['x'], '//server/share/x'),
+      r'\\?\unc\Server\Share': ('//Server/Share/', [], '//Server/Share/'),
+      r'\\?\UNC\server': ('//server/', [], '//server/'),
+      // Other `\\?\` forms and `\\.\` device paths stay literal UNC-like
+      // roots.
+      r'\\?\Volume{b75e2c83}\x': (
+        '//?/Volume{b75e2c83}/',
+        ['x'],
+        '//?/Volume{b75e2c83}/x',
+      ),
+      r'\\?\GLOBALROOT\Device\x': (
+        '//?/GLOBALROOT/',
+        ['Device', 'x'],
+        '//?/GLOBALROOT/Device/x',
+      ),
+      r'\\?\UNC': ('//?/UNC/', [], '//?/UNC/'),
+      r'\\?\UNC\': ('//?/UNC/', [], '//?/UNC/'),
+      r'\\?\C:x': ('//?/C:x/', [], '//?/C:x/'),
+      r'\\?\CD:\x': ('//?/CD:/', ['x'], '//?/CD:/x'),
+      r'\\?\': ('//?/', [], '//?/'),
+      r'\\.\C:\x': ('//./C:/', ['x'], '//./C:/x'),
       // Mixed separators
       r'/a\b/c': ('/', ['a', 'b', 'c'], '/a/b/c'),
       r'a\b\\c': ('', ['a', 'b', 'c'], 'a/b/c'),

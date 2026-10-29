@@ -26,6 +26,12 @@ import 'package:meta/meta.dart';
 /// | `c:\a\b`           | `C:/`             | `b`    | `C:`                     |
 /// | `\\server\share\b` | `//server/share/` | `b`    | `//server/share`         |
 ///
+/// Win32 file namespace paths parse to the path they respell:
+/// `\\?\C:\b` is `C:/b` and `\\?\UNC\server\share\b` is
+/// `//server/share/b`. Other `\\?\` paths and device paths such as
+/// `\\.\pipe\b` keep their prefix as a UNC-like root (`//./pipe/`). See
+/// [PathPolicy.parse] for the rules.
+///
 /// Every operation is pure; a [TreePath] never touches the file system.
 @immutable
 final class TreePath implements Comparable<TreePath> {
@@ -67,9 +73,11 @@ final class TreePath implements Comparable<TreePath> {
   static TreePath? tryParse(String path) => const PathPolicy().tryParse(path);
 
   /// The path root: `''` for relative paths, `/` for POSIX absolute paths,
-  /// `X:/` for Windows drives (letter always uppercase), and
-  /// `//server/share/` for UNC shares (`//server/` when the share is
-  /// missing).
+  /// `X:/` for Windows drives (letter always uppercase, also for a
+  /// `\\?\X:\` path), and `//server/share/` for UNC shares (`//server/`
+  /// when the share is missing; also for a `\\?\UNC\server\share\`
+  /// path). Device paths keep their prefix as the server, as in
+  /// `//./pipe/`.
   ///
   /// Two paths can only contain one another when their roots are equal.
   final String root;

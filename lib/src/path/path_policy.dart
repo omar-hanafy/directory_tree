@@ -91,16 +91,27 @@ final class PathPolicy {
   /// 2. [unicodeNormalizer], when set, is applied to the raw string; an empty
   ///    or NUL-containing result is also a [FormatException].
   /// 3. Separators are `/`, plus `\` when [backslashIsSeparator].
-  /// 4. A drive letter followed by `:` and then a separator or the end of
+  /// 4. When [backslashIsSeparator], a Win32 file namespace prefix that
+  ///    only respells a drive or UNC path is removed, because both forms
+  ///    name the same file (APIs such as Rust's `canonicalize` return the
+  ///    prefixed form): `\\?\C:\x` is read as `C:\x`, and
+  ///    `\\?\UNC\server\share\x` (`UNC` in any case) as
+  ///    `\\server\share\x`. The prefix may be spelled with either
+  ///    separator, and the rest follows the rules below, so `..` is still
+  ///    resolved. Other `\\?\` paths (such as volume GUID paths
+  ///    `\\?\Volume{...}\x`) and device paths (`\\.\pipe\x`,
+  ///    `\\.\C:\x`) are not rewritten: they parse by rule 6 as UNC roots
+  ///    such as `//?/Volume{...}/` and `//./pipe/`.
+  /// 5. A drive letter followed by `:` and then a separator or the end of
   ///    the string becomes the root `X:/` with the letter uppercased.
   ///    `C:foo` (no separator) is a relative segment `C:foo`.
-  /// 5. Exactly two leading separators followed by a non-separator start a
+  /// 6. Exactly two leading separators followed by a non-separator start a
   ///    UNC root `//server/share/`, where server and share are the next two
   ///    segments taken literally (`//server/` when the share is missing).
   ///    Three or more leading separators collapse to the POSIX root `/`.
-  /// 6. One leading separator gives the POSIX root `/`; anything else is
+  /// 7. One leading separator gives the POSIX root `/`; anything else is
   ///    relative (root `''`).
-  /// 7. The rest is split on separators. Empty segments and `.` are dropped;
+  /// 8. The rest is split on separators. Empty segments and `.` are dropped;
   ///    `..` removes the previous segment. `..` at an absolute root stays at
   ///    the root; `..` that would climb above a relative root is a
   ///    [FormatException] (the path escapes its root).
@@ -120,8 +131,9 @@ final class PathPolicy {
     }
     // Unify separators up front so the scan below can use the native
     // indexOf for '/' alone.
-    if (backslashIsSeparator && input.contains(r'\')) {
-      input = input.replaceAll(r'\', '/');
+    if (backslashIsSeparator) {
+      if (input.contains(r'\')) input = input.replaceAll(r'\', '/');
+      input = _stripFileNamespace(input);
     }
 
     final length = input.length;
@@ -258,6 +270,39 @@ final class PathPolicy {
   static const int _slash = 0x2F;
   static const int _colon = 0x3A;
   static const int _dot = 0x2E;
+  static const int _question = 0x3F;
+
+  /// [input] (separators already `/`) without a Win32 file namespace
+  /// prefix that only spells a drive or UNC path differently: `//?/C:/x`
+  /// becomes `C:/x` and `//?/UNC/server/share/x` becomes
+  /// `//server/share/x`. Every other input is returned unchanged.
+  static String _stripFileNamespace(String input) {
+    final length = input.length;
+    if (length < 6 ||
+        input.codeUnitAt(0) != _slash ||
+        input.codeUnitAt(1) != _slash ||
+        input.codeUnitAt(2) != _question ||
+        input.codeUnitAt(3) != _slash) {
+      return input;
+    }
+    // `//?/X:` followed by a separator or the end: a drive path.
+    if (isAsciiLetter(input.codeUnitAt(4)) &&
+        input.codeUnitAt(5) == _colon &&
+        (length == 6 || input.codeUnitAt(6) == _slash)) {
+      return input.substring(4);
+    }
+    // `//?/UNC/` followed by a server name: a UNC path. `UNC` is matched
+    // without regard to case, as Windows does.
+    if (length > 8 &&
+        input.codeUnitAt(4) | 0x20 == 0x75 && // u
+        input.codeUnitAt(5) | 0x20 == 0x6E && // n
+        input.codeUnitAt(6) | 0x20 == 0x63 && // c
+        input.codeUnitAt(7) == _slash &&
+        input.codeUnitAt(8) != _slash) {
+      return '/${input.substring(7)}';
+    }
+    return input;
+  }
 
   /// The index of the next '/' at or after [start], or the input length.
   static int _segmentEnd(String input, int start) {
