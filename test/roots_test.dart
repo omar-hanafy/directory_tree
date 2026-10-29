@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:directory_tree/directory_tree.dart';
 import 'package:test/test.dart';
 
@@ -28,6 +30,42 @@ List<String> rootPaths(DirectoryTree<Object?> tree) => [
 List<String> labels(DirectoryTree<Object?> tree) => [
   for (final node in tree.rootNodes) node.label,
 ];
+
+/// The labelling rule as it was first written: grow every colliding label
+/// one trailing segment at a time while it still collides, falling back to
+/// the full path. Quadratic in depth, so only for small trees.
+List<String> growingLabels(List<TreePath> paths) {
+  String trailing(TreePath path, int take) {
+    final segments = path.segments;
+    if (take > segments.length) return path.toString();
+    return segments.getRange(segments.length - take, segments.length).join('/');
+  }
+
+  final labels = List<String>.filled(paths.length, '');
+  final groups = <String, List<int>>{};
+  for (var i = 0; i < paths.length; i++) {
+    (groups[paths[i].name] ??= <int>[]).add(i);
+  }
+  for (final group in groups.values) {
+    if (group.length == 1) {
+      labels[group.single] = paths[group.single].name;
+      continue;
+    }
+    var pending = group;
+    for (var take = 2; pending.isNotEmpty; take++) {
+      final counts = <String, int>{};
+      for (final i in pending) {
+        labels[i] = trailing(paths[i], take);
+        counts[labels[i]] = (counts[labels[i]] ?? 0) + 1;
+      }
+      pending = [
+        for (final i in pending)
+          if (counts[labels[i]]! > 1) i,
+      ];
+    }
+  }
+  return labels;
+}
 
 void main() {
   group('TreeRoots.minimal', () {
@@ -319,6 +357,56 @@ void main() {
       final tree = DirectoryTree.fromPaths(['C:/src/1', '/foo/C:/src/2']);
       expect(labels(tree), ['foo/C:/src', 'C:/src']);
       expect(labels(tree).toSet(), hasLength(2));
+    });
+
+    test('a drive root and segments spelled like it get distinct labels', () {
+      final tree = DirectoryTree<Never>.build(const [
+        TreeEntry.directory('C:/'),
+        TreeEntry.directory('x/C:'),
+        TreeEntry.directory('/C:'),
+        TreeEntry.directory('/y/C:'),
+      ]);
+      expect(tree.rootNodes.map((node) => node.name).toSet(), {'C:'});
+      expect(labels(tree), unorderedEquals(['C:/', 'x/C:', '/C:', 'y/C:']));
+    });
+
+    test('deep colliding roots are labelled in linear time', () {
+      // Two 8000-deep roots that differ only in their first segment: the
+      // label must grow to the full depth. Building every candidate label
+      // took minutes; comparing segment lists from the end takes one pass.
+      const depth = 8000;
+      final chain = List.filled(depth, 'c').join('/');
+      final tree = DirectoryTree.fromPaths(['/1/$chain/f', '/2/$chain/f']);
+      expect(labels(tree), ['1/$chain', '2/$chain']);
+      // The same with a drive root, whose full path is the longer label.
+      final drives = DirectoryTree.fromPaths(['C:/$chain/f', '/C:/$chain/f']);
+      expect(labels(drives), ['/C:/$chain', 'C:/$chain']);
+    }, timeout: const Timeout(Duration(seconds: 20)));
+
+    test('labels equal growing each label until it is unique', () {
+      // Few names and every root kind, including segments spelled like a
+      // drive, so labels collide at many lengths.
+      const prefixes = ['/', 'C:/', 'D:/', '//s/h/', '', '/C:/', 'x/'];
+      const names = ['a', 'b', 'C:', 'src'];
+      final random = Random(808);
+      var collisions = 0;
+      for (var round = 0; round < 1000; round++) {
+        final entries = [
+          for (var e = 2 + random.nextInt(6); e > 0; e--)
+            TreeEntry<Never>.directory(
+              '${prefixes[random.nextInt(prefixes.length)]}'
+              '${[for (var d = random.nextInt(4); d >= 0; d--) names[random.nextInt(names.length)]].join('/')}',
+            ),
+        ];
+        final tree = DirectoryTree<Never>.build(entries);
+        final roots = tree.rootNodes;
+        final expected = growingLabels([for (final node in roots) node.path]);
+        expect(labels(tree), expected, reason: '$entries');
+        if (roots.map((node) => node.name).toSet().length < roots.length) {
+          collisions++;
+        }
+      }
+      expect(collisions, greaterThan(500));
     });
 
     test('non-root nodes keep their names as labels', () {

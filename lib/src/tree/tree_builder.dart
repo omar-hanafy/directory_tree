@@ -718,10 +718,16 @@ final class _TreeAssembler<T> {
   /// the shortest trailing path that is unique within the colliding group,
   /// falling back to the full canonical path.
   ///
-  /// Labels with different numbers of trailing segments cannot be equal
-  /// (segments never contain `/`), and a full path can only equal a trailing
-  /// label of a root that was still colliding at that length, so resolving
-  /// each group step by step yields labels unique among all roots.
+  /// The result is that of growing every colliding label one segment at a
+  /// time until it is unique, without building the labels in between: a
+  /// root needs one segment more than the longest suffix it shares with
+  /// another root of its group (at least two). A trie over the reversed
+  /// segment lists finds that length for every root in O(total segments),
+  /// and each label is joined once. Trailing labels with different numbers
+  /// of segments cannot be equal (segments never contain `/`), and a full
+  /// path equals a trailing label only for a drive root, whose `C:/a`
+  /// reads like the segments `C:` and `a`, so the drive counts as one more
+  /// segment when suffixes are compared.
   void _labelRoots(List<_Slot<T>> roots) {
     final groups = <String, List<_Slot<T>>>{};
     for (final root in roots) {
@@ -732,18 +738,34 @@ final class _TreeAssembler<T> {
         group.first.label = group.first.path.name;
         continue;
       }
-      var pending = group;
-      for (var take = 2; pending.isNotEmpty; take++) {
-        final counts = <String, int>{};
-        for (final root in pending) {
-          final label = _trailingLabel(root.path, take);
-          root.label = label;
-          counts[label] = (counts[label] ?? 0) + 1;
+      final suffixes = [for (final root in group) _labelSegments(root.path)];
+      final trie = _SuffixNode();
+      for (final segments in suffixes) {
+        var node = trie;
+        for (var i = segments.length - 1; i >= 0; i--) {
+          node = (node.children ??= <String, _SuffixNode>{})[segments[i]] ??=
+              _SuffixNode();
+          node.count++;
         }
-        pending = [
-          for (final root in pending)
-            if (counts[root.label]! > 1) root,
-        ];
+      }
+      for (var r = 0; r < group.length; r++) {
+        final segments = suffixes[r];
+        // The first suffix length no other root shares, or one past the
+        // whole list when another root ends with all of it.
+        var take = 0;
+        var node = trie;
+        while (take < segments.length) {
+          node = node.children![segments[segments.length - 1 - take]]!;
+          take++;
+          if (node.count == 1) break;
+        }
+        if (node.count != 1) take++;
+        if (take < 2) take = 2;
+        final path = group[r].path;
+        final names = path.segments;
+        group[r].label = take > names.length
+            ? path.toString()
+            : names.getRange(names.length - take, names.length).join('/');
       }
     }
     assert(
@@ -752,9 +774,26 @@ final class _TreeAssembler<T> {
     );
   }
 
-  static String _trailingLabel(TreePath path, int take) {
+  /// The segments of a root [path] as its labels read them: its segments,
+  /// preceded by the drive (`C:`) for a drive root, whose full path
+  /// `C:/a` is spelled like the trailing label of the segments `C:` and
+  /// `a`. Root paths are parsed or created in list form, so reading
+  /// [TreePath.segments] is O(1).
+  static List<String> _labelSegments(TreePath path) {
+    final root = path.root;
     final segments = path.segments;
-    if (take > segments.length) return path.toString();
-    return segments.getRange(segments.length - take, segments.length).join('/');
+    final isDrive =
+        root.length == 3 &&
+        root.codeUnitAt(1) == 0x3A && // :
+        isAsciiLetter(root.codeUnitAt(0));
+    if (!isDrive) return segments;
+    return [root.substring(0, 2), ...segments];
   }
+}
+
+/// A node of the reversed-suffix trie in [_TreeAssembler._labelRoots]:
+/// how many roots of a group end with the segments that lead to it.
+final class _SuffixNode {
+  int count = 0;
+  Map<String, _SuffixNode>? children;
 }
