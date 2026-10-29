@@ -780,8 +780,8 @@ const int _notAscii = -2;
 /// non-ASCII character can fold to ASCII, such as the Kelvin sign to `k`,
 /// so the caller must then search `_fold(text)`). Units scanned before an
 /// occurrence are all ASCII, and [_fold] maps each character on its own
-/// without changing lengths, so an occurrence found here is an occurrence
-/// in `_fold(text)` at the same index. [needle] is already folded and is
+/// and keeps ASCII one unit long, so an occurrence found here is an
+/// occurrence in `_fold(text)` at the same index. [needle] is already folded and is
 /// not empty. Runs in O(text length x needle length) in the worst case.
 int _indexOfAscii(String text, String needle) {
   final length = text.length;
