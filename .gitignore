@@ -33,3 +33,6 @@ migrate_working_dir/
 # Benchmark build outputs (dart compile exe writes *.exe on every OS).
 /benchmark/**/build/
 /benchmark/**/*.exe
+
+# Reports that `claude plugin eval` writes next to the plugin's evals.
+/tooling/ai/directory-tree/evals/results/

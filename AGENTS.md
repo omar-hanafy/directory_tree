@@ -149,10 +149,11 @@ rule to get a green run.
   `migrate-directory-tree-vX-to-vY` skill before it is tagged.
 - The plugin tree, catalogs, `tool/`, the claims test (it reads the
   skills), and this file are excluded from the pub archive (`.pubignore`,
-  and pub skips hidden directories). Eval
-  results are not committed: run `claude plugin eval` with `--output-dir`
-  outside the repository, since `evals/results/` is not gitignored and
-  `tool/check_repo.dart` scans untracked files.
+  and pub skips hidden directories). Eval results are not committed:
+  `tooling/ai/directory-tree/evals/results/`, where `claude plugin eval`
+  writes them by default, is gitignored, so neither git nor
+  `tool/check_repo.dart` (which scans tracked and untracked, non-ignored
+  files) sees them.
 
 ## Consumer-relied invariants
 
