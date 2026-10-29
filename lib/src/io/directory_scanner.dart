@@ -75,7 +75,9 @@ import 'package:meta/meta.dart';
 /// to [onError]. With [followLinks], a link at such a path is typed and
 /// resolved the same way, and a resolved target that comes back in
 /// extended-length form is compared in its ordinary form, so cycle
-/// detection sees one spelling.
+/// detection sees one spelling. The scan root gets the same retries, so a
+/// root past `MAX_PATH` can be passed by its ordinary path; the reported
+/// paths keep that spelling.
 ///
 /// A small `tree`-like command line tool:
 ///
@@ -214,9 +216,7 @@ final class DirectoryScanner {
     final walk = _Walk(
       this,
       root,
-      rootResolved: followLinks
-          ? _comparable(await root.resolveSymbolicLinks())
-          : null,
+      rootResolved: followLinks ? await _resolveRootAsync(root) : null,
     );
     while (walk.isNotDone) {
       final visit = walk.next();
@@ -260,9 +260,7 @@ final class DirectoryScanner {
     final walk = _Walk(
       this,
       root,
-      rootResolved: followLinks
-          ? _comparable(root.resolveSymbolicLinksSync())
-          : null,
+      rootResolved: followLinks ? _resolveRootSync(root) : null,
     );
     while (walk.isNotDone) {
       final visit = walk.next();
@@ -364,8 +362,19 @@ final class DirectoryScanner {
   // `typeSync` follows links, so a link to a directory is accepted as the
   // root and a broken link counts as missing. It is used by [scan] too: it
   // is one stat call, cheaper than the asynchronous round trip.
+  //
+  // On Windows, a root whose ordinary path is too long for the Win32 calls
+  // is asked again through its extended-length path (see [_longPathRetry]),
+  // like a directory listing or a link. The returned directory keeps the
+  // caller's spelling, so every reported path starts with it. An empty
+  // path is never retried: its absolute form would be the current
+  // directory, and an empty path must stay missing.
   Directory _root(String path) {
-    final type = FileSystemEntity.typeSync(path);
+    var type = FileSystemEntity.typeSync(path);
+    if (type == FileSystemEntityType.notFound && path.isNotEmpty) {
+      final extended = _longPathRetry(path);
+      if (extended != null) type = FileSystemEntity.typeSync(extended);
+    }
     if (type == FileSystemEntityType.notFound) {
       // ENOENT on POSIX and ERROR_FILE_NOT_FOUND on Windows are both 2.
       throw PathNotFoundException(
@@ -384,6 +393,32 @@ final class DirectoryScanner {
   }
 
   void _reportFailure(FileSystemException error) => onError?.call(error);
+
+  /// The real path of the scan [root] in the spelling cycle checks compare
+  /// (see [_comparable]), resolved again through the extended-length path
+  /// when the ordinary resolution fails and the path is too long for
+  /// Windows (see [_longPathRetry]). Throws the error of the last attempt;
+  /// off Windows that is the error of the one ordinary attempt.
+  static Future<String> _resolveRootAsync(Directory root) async {
+    try {
+      return _comparable(await root.resolveSymbolicLinks());
+    } on FileSystemException {
+      final extended = _longPathRetry(root.path);
+      if (extended == null) rethrow;
+      return _comparable(await Directory(extended).resolveSymbolicLinks());
+    }
+  }
+
+  /// Like [_resolveRootAsync], for [scanSync].
+  static String _resolveRootSync(Directory root) {
+    try {
+      return _comparable(root.resolveSymbolicLinksSync());
+    } on FileSystemException {
+      final extended = _longPathRetry(root.path);
+      if (extended == null) rethrow;
+      return _comparable(Directory(extended).resolveSymbolicLinksSync());
+    }
+  }
 
   /// The children of [directory], listed again through its extended-length
   /// path when the ordinary listing fails because the path is too long for

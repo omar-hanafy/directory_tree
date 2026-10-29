@@ -543,6 +543,52 @@ void main() {
     });
   }, skip: Platform.isWindows ? false : 'MAX_PATH applies only on Windows');
 
+  group('a root past MAX_PATH', () {
+    /// Creates a file or, when [path] ends with a separator, a directory,
+    /// through the extended-length path when the ordinary one is refused
+    /// for its length.
+    void createLong(String path) {
+      void make(String target) {
+        if (path.endsWith(Platform.pathSeparator)) {
+          Directory(target).createSync(recursive: true);
+        } else {
+          File(target).createSync(recursive: true);
+        }
+      }
+
+      try {
+        make(path);
+      } on FileSystemException {
+        final extended = windowsExtendedLengthPath(File(path).absolute.path);
+        if (extended == null) rethrow;
+        make(extended);
+      }
+    }
+
+    test('is scanned by its ordinary path, with and without links', () async {
+      final separator = Platform.pathSeparator;
+      final bottom = [base.path, ...List.filled(150, 'd')].join(separator);
+      expect(bottom.length, greaterThan(windowsMaxPath));
+      createLong('$bottom$separator');
+      createLong('$bottom${separator}inner.txt');
+      createLong('$bottom${separator}sub$separator');
+
+      for (final followLinks in [false, true]) {
+        final errors = <FileSystemException>[];
+        final result = await scanBoth(
+          DirectoryScanner(followLinks: followLinks, onError: errors.add),
+          bottom,
+        );
+        expect(errors, isEmpty, reason: 'followLinks: $followLinks');
+        expect(result, [
+          'd:.:Directory',
+          'f:inner.txt:File',
+          'd:sub:Directory',
+        ], reason: 'followLinks: $followLinks');
+      }
+    });
+  }, skip: Platform.isWindows ? false : 'MAX_PATH applies only on Windows');
+
   group('relative paths', () {
     late Directory relativeBase;
 
