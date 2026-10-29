@@ -524,8 +524,13 @@ final class DirectoryTree<T> {
   /// Whether [other] is a [DirectoryTree] with equal [options] and equal
   /// [nodes] in the same order.
   ///
-  /// Runs in O(n) (after an O(1) check of the cached [hashCode]); [issues]
-  /// are not compared.
+  /// Compares the cached [hashCode]s first, so unequal trees usually answer
+  /// without comparing nodes, after paying for the hashes once (see
+  /// [hashCode]). Equal trees compare every node, whose
+  /// id, path, and label are strings, so the cost is O(n) plus the total
+  /// length of those strings (plus entry data equality), not O(n) alone: a
+  /// chain of depth d has paths of total length O(d^2). [issues] are not
+  /// compared.
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
@@ -542,7 +547,16 @@ final class DirectoryTree<T> {
     return true;
   }
 
-  /// A hash of [options] and [nodes], computed once in O(n) and cached.
+  /// A hash of [options] and [nodes], computed on first use and cached.
+  ///
+  /// The first call hashes every node, and a node's hash covers its id and
+  /// path strings, so it costs O(n) plus the total length of those strings
+  /// (plus hashing entry data). On the VM a string caches its hash, and the
+  /// build has already hashed the ids, so this is fast in practice. On
+  /// JavaScript a string's hash is recomputed on every call: the first
+  /// [hashCode] of a 10000-deep chain (paths of about 100 million characters
+  /// in total) takes on the order of a second on Node.js, against a
+  /// millisecond on the VM. Later calls return the cached value in O(1).
   @override
   late final int hashCode = Object.hash(options, Object.hashAll(_nodes));
 
