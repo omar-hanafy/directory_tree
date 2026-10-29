@@ -97,11 +97,14 @@ final class PathPolicy {
   ///    prefixed form): `\\?\C:\x` is read as `C:\x`, and
   ///    `\\?\UNC\server\share\x` (`UNC` in any case) as
   ///    `\\server\share\x`. The prefix may be spelled with either
-  ///    separator, and the rest follows the rules below, so `..` is still
-  ///    resolved. Other `\\?\` paths (such as volume GUID paths
-  ///    `\\?\Volume{...}\x`) and device paths (`\\.\pipe\x`,
-  ///    `\\.\C:\x`) are not rewritten: they parse by rule 6 as UNC roots
-  ///    such as `//?/Volume{...}/` and `//./pipe/`.
+  ///    separator, a run of separators after `\\?\` or after `UNC\`
+  ///    counts as one (`\\?\\C:\x` is `C:\x`), and a result that
+  ///    starts with such a prefix again is stripped again
+  ///    (`\\?\UNC\?\C:\x` is `C:\x`). The rest follows the rules
+  ///    below, so `..` is still resolved. Other `\\?\` paths (such as
+  ///    volume GUID paths `\\?\Volume{...}\x`) and device paths
+  ///    (`\\.\pipe\x`, `\\.\C:\x`) are not rewritten: they parse by
+  ///    rule 6 as UNC roots such as `//?/Volume{...}/` and `//./pipe/`.
   /// 5. A drive letter followed by `:` and then a separator or the end of
   ///    the string becomes the root `X:/` with the letter uppercased.
   ///    `C:foo` (no separator) is a relative segment `C:foo`.
@@ -272,36 +275,56 @@ final class PathPolicy {
   static const int _dot = 0x2E;
   static const int _question = 0x3F;
 
-  /// [input] (separators already `/`) without a Win32 file namespace
-  /// prefix that only spells a drive or UNC path differently: `//?/C:/x`
+  /// [input] (separators already `/`) without the Win32 file namespace
+  /// prefixes that only spell a drive or UNC path differently: `//?/C:/x`
   /// becomes `C:/x` and `//?/UNC/server/share/x` becomes
   /// `//server/share/x`. Every other input is returned unchanged.
+  ///
+  /// The result is a fixed point, so a canonical string parses back to the
+  /// same path. Separator runs after `//?/` and after `UNC/` are skipped
+  /// like the run between a UNC server and its share, because parsing
+  /// collapses them anyway: `//?///C:/x` is `C:/x`, not the UNC root
+  /// `//?/C:/` that would print as the strippable `//?/C:/x`. A UNC
+  /// prefix whose server is `?` again (`//?/UNC/?/C:/x`) is stripped
+  /// again, for as long as the text keeps that form. The loop moves an
+  /// index instead of building each intermediate string, so the whole
+  /// strip runs in O(input length) and copies the text at most once.
   static String _stripFileNamespace(String input) {
     final length = input.length;
-    if (length < 6 ||
+    if (length < 4 ||
         input.codeUnitAt(0) != _slash ||
-        input.codeUnitAt(1) != _slash ||
-        input.codeUnitAt(2) != _question ||
-        input.codeUnitAt(3) != _slash) {
+        input.codeUnitAt(1) != _slash) {
       return input;
     }
-    // `//?/X:` followed by a separator or the end: a drive path.
-    if (isAsciiLetter(input.codeUnitAt(4)) &&
-        input.codeUnitAt(5) == _colon &&
-        (length == 6 || input.codeUnitAt(6) == _slash)) {
-      return input.substring(4);
+    // The text so far is `//` followed by input.substring(server).
+    var server = 2;
+    while (server + 1 < length &&
+        input.codeUnitAt(server) == _question &&
+        input.codeUnitAt(server + 1) == _slash) {
+      final index = _skipSeparators(input, server + 1);
+      // `//?/X:` followed by a separator or the end: a drive path.
+      if (index + 1 < length &&
+          isAsciiLetter(input.codeUnitAt(index)) &&
+          input.codeUnitAt(index + 1) == _colon &&
+          (index + 2 == length || input.codeUnitAt(index + 2) == _slash)) {
+        return input.substring(index);
+      }
+      // `//?/UNC/` followed by a server name: a UNC path. `UNC` is matched
+      // without regard to case, as Windows does.
+      if (index + 3 < length &&
+          input.codeUnitAt(index) | 0x20 == 0x75 && // u
+          input.codeUnitAt(index + 1) | 0x20 == 0x6E && // n
+          input.codeUnitAt(index + 2) | 0x20 == 0x63 && // c
+          input.codeUnitAt(index + 3) == _slash) {
+        final next = _skipSeparators(input, index + 3);
+        if (next < length) {
+          server = next;
+          continue;
+        }
+      }
+      break;
     }
-    // `//?/UNC/` followed by a server name: a UNC path. `UNC` is matched
-    // without regard to case, as Windows does.
-    if (length > 8 &&
-        input.codeUnitAt(4) | 0x20 == 0x75 && // u
-        input.codeUnitAt(5) | 0x20 == 0x6E && // n
-        input.codeUnitAt(6) | 0x20 == 0x63 && // c
-        input.codeUnitAt(7) == _slash &&
-        input.codeUnitAt(8) != _slash) {
-      return '/${input.substring(7)}';
-    }
-    return input;
+    return server == 2 ? input : '//${input.substring(server)}';
   }
 
   /// The index of the next '/' at or after [start], or the input length.

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:directory_tree/directory_tree.dart';
 import 'package:test/test.dart';
 
@@ -78,6 +80,85 @@ void main() {
         tree.idOf(r'\\?\UNC\server\share\c.txt'),
         tree.idOf(r'\\server\share\c.txt'),
       );
+    });
+
+    test('are stripped to a fixed point', () {
+      // input -> canonical string. Each input once parsed to a canonical
+      // string that parsed again to a different path.
+      const cases = {
+        r'\\?\\C:\x': 'C:/x',
+        r'\\?\UNC\\server\share\x': '//server/share/x',
+        r'\\?\UNC\?\C:\x': 'C:/x',
+        r'\\?\UNC\?\UNC\s\t': '//s/t/',
+        r'\\?\\\unc\/?\\c:': 'C:/',
+        r'//?//UNC//?//UNC//s//t//x': '//s/t/x',
+      };
+      cases.forEach((input, canonical) {
+        final path = const PathPolicy().parse(input);
+        expect(path.toString(), canonical, reason: input);
+        expect(const PathPolicy().parse(canonical), path, reason: input);
+      });
+      final tree = DirectoryTree.fromPaths(cases.keys);
+      for (final node in tree.nodes) {
+        expect(tree.nodeAt(node.path.toString()), same(node));
+      }
+      final builder = DirectoryTreeBuilder<Object?>()
+        ..addFile(r'\\?\UNC\?\C:\x\a.txt');
+      expect(builder.remove('C:/x'), 1);
+    });
+
+    test('parse(parse(x).toString()) equals parse(x) for generated '
+        'namespace inputs', () {
+      const starts = [r'\\?\', '//?/', r'\\.\', r'\\', '//', r'\/', ''];
+      const tokens = [
+        'UNC',
+        'unc',
+        'Unc',
+        'UNC?',
+        '?',
+        '.',
+        '..',
+        '',
+        'C:',
+        'c:',
+        'C:x',
+        'CD:',
+        'srv',
+        'share',
+        'x',
+        r'UNC\?',
+        r'\\?\',
+      ];
+      const separators = [r'\', '/', r'\\', '//', r'/\', r'\\\'];
+      const policies = [
+        PathPolicy(),
+        PathPolicy.caseInsensitive,
+        PathPolicy(backslashIsSeparator: false),
+      ];
+      final random = Random(20261029);
+      var checked = 0;
+      for (var i = 0; i < 6000; i++) {
+        final buffer = StringBuffer(starts[random.nextInt(starts.length)]);
+        final count = random.nextInt(6);
+        for (var k = 0; k < count; k++) {
+          if (k > 0) {
+            buffer.write(separators[random.nextInt(separators.length)]);
+          }
+          buffer.write(tokens[random.nextInt(tokens.length)]);
+        }
+        final input = buffer.toString();
+        for (final policy in policies) {
+          final path = policy.tryParse(input);
+          if (path == null) continue;
+          checked++;
+          final again = policy.parse(path.toString());
+          expect(again, path, reason: '$input under $policy');
+          expect(again.root, path.root, reason: input);
+          expect(again.segments, path.segments, reason: input);
+          expect(policy.idOf(again), policy.idOf(path), reason: input);
+        }
+      }
+      expect(checked, greaterThan(10000));
     });
 
     test('are literal when backslash is not a separator', () {
