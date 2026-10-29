@@ -170,8 +170,9 @@ String _defaultLabel(TreeRow<Object?> row) {
 /// File names may contain any character except `/` and NUL, so a scanned
 /// directory can hold a name with a line break (which would split one row
 /// over two lines) or an ESC sequence (which a terminal would execute, for
-/// example to recolor text or move the cursor). The escapes are those of C
-/// string literals and `ls --quoting-style=escape`:
+/// example to recolor text or move the cursor). The escapes are C-like,
+/// but `\x` always takes exactly two hex digits, so `\x1Bb` reads as ESC
+/// followed by `b`:
 ///
 /// * `\n`, `\r`, and `\t` for line feed, carriage return, and tab;
 /// * `\xHH` (two uppercase hex digits) for the other C0 controls U+0000 to

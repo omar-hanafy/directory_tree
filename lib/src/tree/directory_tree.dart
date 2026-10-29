@@ -500,7 +500,8 @@ final class DirectoryTree<T> {
   /// Lines are joined with `\n`, without a trailing newline; an empty tree
   /// renders as the empty string. Runs in O(n) with a filter (one filter
   /// call per node), otherwise in O(rows printed + roots), plus the length
-  /// of the output. Uses no recursion, so depth is unlimited.
+  /// of the output; with [compactFolders], each compacted row also costs
+  /// the length of its chain. Uses no recursion, so depth is unlimited.
   @useResult
   String render({
     TreeStyle style = TreeStyle.unicode,

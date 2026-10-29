@@ -742,9 +742,13 @@ final class TreeRows<T> extends ListBase<TreeRow<T>> {
   ///
   /// Returns these rows when both states are unchanged, and keeps the rows
   /// when only [requestedExpansion] changes. Otherwise recomputes them from
-  /// scratch, in O(rows) plus one hash lookup per directory row, and O(n)
-  /// more when revealing; the row list is allocated in proportion to the
+  /// scratch, in O(rows) plus one hash lookup per directory row (with
+  /// [compactFolders], each compacted row also costs the length of its
+  /// chain), and O(n) more when revealing. The row list grows with the
   /// result, so collapsing a large filtered view to a few rows stays cheap.
+  /// It is sized up front to the number of visible nodes, an upper bound,
+  /// only when no visible directory is collapsed: after a reveal, or for an
+  /// expanded-by-default state whose few exceptions hide nothing.
   /// The filter is not called again: the match results of the original
   /// flatten are reused.
   @useResult
