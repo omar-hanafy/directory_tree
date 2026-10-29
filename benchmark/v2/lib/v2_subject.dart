@@ -64,6 +64,9 @@ class V2Subject extends BenchSubject {
         collapsedExpansion;
         fullRows;
       case 'filter':
+        // Build the tree here, as v1's set-up does, so no timed run
+        // includes the build (even with --warmup 0).
+        tree;
         query;
       case 'diff':
         fullRows;
