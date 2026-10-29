@@ -31,8 +31,10 @@ replacement and lists the behavior changes. `dart fix --apply` renames
   Siblings sort directories first, in natural order (`file2` before
   `file10`).
 - `diffVisibleNodes` is replaced by `ListDiff.compute`, which diffs any
-  keyed list, reports kept rows whose content changed in `changedIndices`,
-  and throws an `ArgumentError` on duplicate keys.
+  keyed list and reports kept rows whose content changed in
+  `changedIndices`. Keys must be unique: a repeat in the part of the lists
+  that differs throws an `ArgumentError`, and repeats elsewhere are caught
+  when assertions are enabled.
 - `compileFilter` and `Predicate` are replaced by `TreeQuery` and
   `TreeFilter`. Queries add glob, path, quoted, `type:`, and `path:` terms,
   and `ext:` no longer matches directories.
