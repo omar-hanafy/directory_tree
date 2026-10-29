@@ -199,15 +199,14 @@ Output is one JSON object per operation on stdout, for example:
   different algorithms (v1 full flatten, v2 incremental update); use
   `toggle_full` for a like-for-like flatten comparison.
 - AOT compilation drops object fields that the program never reads. The
-  v1 subject reads only `VisibleNode.id`, so a v1 row in the benchmark
-  executable is 16 bytes, while an application that draws rows (name,
-  depth, and so on) gets the full 96-byte row. v2's `TreeRow` fields are
-  read by the library itself, so its rows keep all 112 bytes. `flatten`,
-  `toggle_full`, and v1's `toggle` therefore allocate several times less
-  for v1 here than in a real v1 application, which mostly shows in their
-  medians: a build of the v1 subject that reads every row field once, on a
-  tiny tree, measured v1 `flatten` medians of 17.7 ms instead of 10.7 ms
-  (deep 100k) and 277 ms instead of 187 ms (wide 1M).
+  timed v1 operations read only `VisibleNode.id`, which would shrink a v1
+  row in the benchmark executable from 96 to 16 bytes and let `flatten`,
+  `toggle_full`, and v1's `toggle` allocate several times less than in
+  any application that draws rows. Both subjects therefore read every row
+  field once, on a tiny tree, in their untimed set-up, so each executable
+  keeps the rows an application gets. Results measured before this read
+  was added understate v1's row cost: its `flatten` medians were 10.7 ms
+  instead of 17.7 ms (deep 100k) and 187 ms instead of 277 ms (wide 1M).
 - `filter` uses a plain substring query; v1's `ext:` and `!` syntax is not
   exercised.
 - Generator changes alter the fingerprints and invalidate stored results;

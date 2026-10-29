@@ -67,6 +67,7 @@ class V1Subject extends BenchSubject {
 
   @override
   void setUp(String operation) {
+    _readEveryRowField();
     switch (operation) {
       case 'build':
         entries;
@@ -116,4 +117,40 @@ class V1Subject extends BenchSubject {
         throw ArgumentError.value(operation, 'operation');
     }
   }
+}
+
+/// Reads every [VisibleNode] field once, on a tiny tree, so the compiled
+/// benchmark keeps the rows an application gets.
+///
+/// AOT compilation drops object fields that the program never reads. The
+/// timed operations read only `VisibleNode.id`, so without this read a v1
+/// row would shrink from 96 to 16 bytes and `flatten` would allocate
+/// several times less than in any application that draws rows. It runs in
+/// the untimed set-up, and the checksum check keeps the reads alive.
+void _readEveryRowField() {
+  final data = TreeBuilder().build(
+    entries: [
+      TreeEntry(id: '/a/b.txt', name: 'b.txt', fullPath: '/a/b.txt'),
+      TreeEntry(id: '/a/c/d.txt', name: 'd.txt', fullPath: '/a/c/d.txt'),
+    ],
+  );
+  final rows = const DefaultFlattenStrategy().flatten(
+    data: data,
+    expandedIds: {for (final node in data.nodes.values) node.id},
+  );
+  var checksum = 0;
+  for (final row in rows) {
+    checksum ^=
+        row.id.hashCode ^
+        row.depth ^
+        row.name.hashCode ^
+        row.type.index ^
+        (row.hasChildren ? 1 : 0) ^
+        row.virtualPath.hashCode ^
+        (row.entryId?.hashCode ?? 0) ^
+        (row.isVirtual ? 2 : 0) ^
+        (row.sourcePath?.hashCode ?? 0) ^
+        row.origin.index;
+  }
+  if (checksum == -1) throw StateError('unreachable checksum');
 }

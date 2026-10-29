@@ -50,6 +50,7 @@ class V2Subject extends BenchSubject {
 
   @override
   void setUp(String operation) {
+    _readEveryRowField();
     switch (operation) {
       case 'build':
         entries;
@@ -113,4 +114,34 @@ class V2Subject extends BenchSubject {
         throw ArgumentError.value(operation, 'operation');
     }
   }
+}
+
+/// Reads every [TreeRow] field and getter once, on a tiny tree, so the
+/// compiled benchmark keeps the rows an application gets.
+///
+/// The v1 subject does the same: AOT compilation drops object fields that
+/// the program never reads, and both subjects should measure the rows a UI
+/// draws. It runs in the untimed set-up, and the checksum check keeps the
+/// reads alive.
+void _readEveryRowField() {
+  final rows = DirectoryTree.fromPaths([
+    '/a/b.txt',
+    '/a/c/d.txt',
+  ]).flatten(compactFolders: true);
+  var checksum = 0;
+  for (final row in rows) {
+    checksum ^=
+        row.id.hashCode ^
+        row.node.hashCode ^
+        row.depth ^
+        (row.isExpanded ? 1 : 0) ^
+        (row.hasChildren ? 2 : 0) ^
+        (row.isLast ? 4 : 0) ^
+        (row.isMatch ? 8 : 0) ^
+        row.guides.length ^
+        row.chain.length ^
+        row.label.hashCode ^
+        row.hashCode;
+  }
+  if (checksum == -1) throw StateError('unreachable checksum');
 }
