@@ -1,24 +1,26 @@
 name: directory_tree
-description: Deterministic directory tree builder for Dart.
-version: 1.0.0
+description: >-
+  Deterministic, immutable directory trees for pure Dart: canonical paths,
+  indexed nodes, flattened rows, filters, selection, and diffs on every platform.
+version: 2.0.0
 homepage: https://github.com/omar-hanafy/directory_tree
 repository: https://github.com/omar-hanafy/directory_tree
 issue_tracker: https://github.com/omar-hanafy/directory_tree/issues
-documentation: https://github.com/omar-hanafy/directory_tree#readme
-example: example
+documentation: https://pub.dev/documentation/directory_tree/latest/
 
 topics:
   - filesystem
   - tree
+  - file-explorer
+  - tree-view
+  - paths
 
 environment:
-  sdk: ^3.10.4
+  sdk: ^3.8.0
 
 dependencies:
-  equatable: ^2.0.7
-  path: ^1.9.1
-  uuid: ^4.5.2
+  meta: ^1.16.0
 
 dev_dependencies:
-  lints: ^6.0.0
-  test: ^1.28.0
+  lints: ^6.1.0
+  test: ^1.27.0

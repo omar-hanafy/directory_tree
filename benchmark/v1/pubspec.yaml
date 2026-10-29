@@ -1,0 +1,17 @@
+name: directory_tree_bench_v1
+description: Benchmarks directory_tree 1.0.0, the release published on pub.dev.
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  directory_tree: 1.0.0
+  directory_tree_bench_harness:
+    path: ../harness
+  directory_tree_bench_workloads:
+    path: ../workloads
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.28.0

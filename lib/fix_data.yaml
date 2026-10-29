@@ -1,0 +1,37 @@
+# Data-driven fixes for `dart fix`.
+#
+# Only renames whose type and meaning did not change between 1.0.0 and
+# 2.0.0 are listed. Every other 1.x API changed shape and needs the manual
+# steps in MIGRATION.md. test_fixes/ proves each transform against goldens.
+version: 1
+
+transforms:
+  - title: 'Rename to removedIndices'
+    date: 2026-10-29
+    element:
+      uris: ['directory_tree.dart']
+      field: 'removeIndicesDesc'
+      inClass: 'ListDiff'
+    changes:
+      - kind: 'rename'
+        newName: 'removedIndices'
+
+  - title: 'Rename to insertedIndices'
+    date: 2026-10-29
+    element:
+      uris: ['directory_tree.dart']
+      field: 'insertIndicesAsc'
+      inClass: 'ListDiff'
+    changes:
+      - kind: 'rename'
+        newName: 'insertedIndices'
+
+  - title: 'Rename to path'
+    date: 2026-10-29
+    element:
+      uris: ['directory_tree.dart']
+      field: 'fullPath'
+      inClass: 'TreeEntry'
+    changes:
+      - kind: 'rename'
+        newName: 'path'

@@ -1,0 +1,187 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-stable:
+    name: CI / Test on stable
+    runs-on: ubuntu-latest
+    # A hung test fails in minutes instead of holding a runner for hours.
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Dart (stable)
+        uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: stable
+
+      # main carries stable versions only and dev prerelease versions only.
+      # Checked on every pull request into, and push to, either lane, not only
+      # when pubspec.yaml changed, so a lane can never hold the wrong channel.
+      - name: Version channel check
+        if: >-
+          (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'dev')) ||
+          (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'dev'))
+        env:
+          TARGET_LANE: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(awk '/^version:/ {print $2; exit}' pubspec.yaml | tr -d "\"'")
+          stable_pattern='^[0-9]+\.[0-9]+\.[0-9]+(\+[0-9A-Za-z.-]+)?$'
+          prerelease_pattern='^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+(\+[0-9A-Za-z.-]+)?$'
+          if [[ "$TARGET_LANE" == 'main' && ! "$version" =~ $stable_pattern ]]; then
+            echo "main requires a stable semantic version, got $version."
+            exit 1
+          fi
+          if [[ "$TARGET_LANE" == 'dev' && ! "$version" =~ $prerelease_pattern ]]; then
+            echo "dev requires a prerelease semantic version (e.g. -dev.1), got $version."
+            exit 1
+          fi
+          echo "Version $version fits the $TARGET_LANE lane."
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      # Every enabled lint is a gate, not a suggestion.
+      - name: Analyze
+        run: dart analyze --fatal-infos
+
+      # Proves every lib/fix_data.yaml transform against test_fixes/ goldens.
+      # Skipped until the package ships data-driven fixes.
+      - name: Verify dart fix migrations
+        if: hashFiles('test_fixes/**') != ''
+        run: dart fix test_fixes --compare-to-golden
+
+      - name: Repository checks
+        run: dart run tool/check_repo.dart
+
+      - name: Test (VM)
+        run: dart test
+
+      # The core library promises identical behavior on every platform.
+      # Suites marked @TestOn('vm') (dart:io scanner, repository files) are
+      # skipped automatically on these platforms.
+      - name: Test compiled to JavaScript (Node)
+        run: dart test -p node
+
+      - name: Test compiled to WebAssembly (Chrome)
+        run: dart test -p chrome -c dart2wasm
+
+  test-minimum:
+    name: CI / Test on minimum SDK
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Dart (minimum supported)
+        uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.8.0'
+
+      # Proves the lower bounds in pubspec.yaml still compile and pass.
+      - name: Resolve lowest supported dependencies
+        run: dart pub downgrade
+
+      - name: Analyze
+        run: dart analyze
+
+      # The downgraded frontend_server_client looks for
+      # frontend_server.dart.snapshot, which Dart 3.8.0 no longer ships (only
+      # the AOT snapshot), so the default compiler cannot start. Source mode
+      # runs the same suites on the downgraded dependency graph.
+      - name: Test
+        run: dart test --compiler source
+
+  # The path parser is tested with literal Windows paths everywhere, but the
+  # dart:io scanner only meets real drive letters, backslashes, and Windows
+  # file semantics here. Not a required check, so a runner outage cannot
+  # block a release; a red run still blocks review.
+  test-windows:
+    name: CI / Test on Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Dart (stable)
+        uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: stable
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Test (VM)
+        run: dart test
+
+  test-beta:
+    name: CI / Test on beta
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Dart (beta)
+        uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: beta
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Analyze
+        run: dart analyze
+
+      - name: Test
+        run: dart test
+
+  pana:
+    name: CI / Pana
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Dart (stable)
+        uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: stable
+
+      - name: Install dependencies
+        run: dart pub get
+
+      # Pinned so a pana release cannot change the gate between two runs of
+      # the same commit; bump it deliberately.
+      - name: Install pana
+        run: dart pub global activate pana 0.23.19
+
+      - name: Run pana (full score required)
+        run: pana --exit-code-threshold 0 .

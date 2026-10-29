@@ -1,0 +1,28 @@
+# pub uses this file INSTEAD of .gitignore for this directory, so it repeats
+# the .gitignore patterns that matter for the archive. pub always skips hidden
+# files and directories (.dart_tool/, .github/, .idea/).
+
+# Local artifacts and debug output (repeated from .gitignore).
+/pubspec.lock
+*.log
+*.class
+*.pyc
+*.swp
+*.iml
+*.ipr
+*.iws
+**/doc/api/
+build/
+coverage/
+migrate_working_dir/
+
+# Maintainer-only tooling, benchmarks, and contributor docs.
+tool/
+tooling/
+# Reads the skills under tooling/, which the archive leaves out.
+test/agent_skill_claims_test.dart
+benchmark/
+AGENTS.md
+CLAUDE.md
+docs_guide.md
+firebase-debug.log
