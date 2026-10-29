@@ -33,6 +33,9 @@ dart format --output=none --set-exit-if-changed .
 dart analyze --fatal-infos                 # every lint is a gate
 dart fix test_fixes --compare-to-golden    # CI runs it once test_fixes/ exists
 dart run tool/check_repo.dart              # em-dash, changelog, platform imports, deprecations
+dart run tool/validate_agent_plugin.dart   # AI plugin/marketplace consistency
+# After plugin changes (needs the claude, codex, and agy CLIs on PATH):
+dart run tool/verify_agent_hosts.dart --require claude,codex,agy
 dart test                                  # VM
 dart test -p node                          # JavaScript
 dart test -p node -c dart2wasm             # WebAssembly locally; CI uses -p chrome -c dart2wasm
@@ -54,6 +57,11 @@ dart pub global activate pana 0.23.19 && pana --exit-code-threshold 0 .   # 160/
   `continue-on-error`.
 - "CI / Pana": pana pinned to 0.23.19 with `--exit-code-threshold 0`, so
   any lost point fails. Bump the pin deliberately.
+
+`agent-plugin.yml` ("Agent plugin / Hosts") runs the plugin validator,
+the skill claims test, and the host check on pull requests and pushes to
+`main` that touch the plugin, weekly, and on demand. It is not a required
+check: a host outage must not block a release.
 
 `publish-dry-run.yml` runs `dart pub publish --dry-run`; warnings are fatal
 there, so never add `--ignore-warnings`.
@@ -102,6 +110,49 @@ rule to get a green run.
   platform) and `example/scan_directory.dart` (tested by
   `test/scan_example_test.dart` on the VM) print their results; keep the
   tests in sync.
+
+## AI assistant plugin (Claude Code, Codex, Antigravity)
+
+- Canonical tree: `tooling/ai/directory-tree/` with one shared `skills/`
+  set (`use-directory-tree`, `migrate-directory-tree-v1-to-v2`),
+  `assets/icon.png`, an `evals/` suite for `claude plugin eval`, and three
+  manifests: `plugin.json` (Agent Plugins 1.0, read by Codex, Antigravity,
+  and other Agent Plugins clients), `.claude-plugin/plugin.json` (Claude
+  Code), and `.codex-plugin/plugin.json` (legacy, for older Codex
+  releases). Catalogs: `.claude-plugin/marketplace.json` and
+  `.agents/plugins/marketplace.json` at the repo root; Antigravity has no
+  third-party marketplace and installs the plugin folder by its GitHub
+  `tree/main/...` URL.
+- All three manifests' `version` must equal the `pubspec.yaml` version, and
+  their shared metadata must match; the Codex interface appears in
+  `plugin.json` (`extensions["com.openai"].interface`) and in the legacy
+  manifest, identically. `tool/validate_agent_plugin.dart` enforces this,
+  plus the icon, the skill frontmatter and size limits, the eval layout,
+  and the install commands in both READMEs.
+- `tool/verify_agent_hosts.dart` installs the plugin in throwaway Claude
+  Code, Codex, and Antigravity profiles (never the real ones) and requires
+  the pubspec version and byte-identical skills; `--github <ref>` installs
+  from GitHub the way users do. A weekly failure usually means a host
+  changed its plugin contract; the plugin README's "Keeping it current"
+  section is the refresh checklist.
+- Skill facts must match the source (the dartdoc in `lib/`, `README.md`,
+  `MIGRATION.md`, `lib/fix_data.yaml`). When changing behavior in `lib/`,
+  update the affected skill or reference file in the same pull request.
+  `test/agent_skill_claims_test.dart` runs every ```` ```dart ```` block of
+  the skills (copied verbatim, like the README blocks, and checking each
+  `print(...); // output`) and asserts every factual claim of the prose
+  against the API; extend it when a skill gains a claim, and never weaken
+  it to get a green run: re-check the fact instead.
+- Skill code lines must survive `dart format` at the test's indentation
+  (about 72 columns, trailing comment included).
+- A breaking release must ship its migration hop as a
+  `migrate-directory-tree-vX-to-vY` skill before it is tagged.
+- The plugin tree, catalogs, `tool/`, the claims test (it reads the
+  skills), and this file are excluded from the pub archive (`.pubignore`,
+  and pub skips hidden directories). Eval
+  results are not committed: run `claude plugin eval` with `--output-dir`
+  outside the repository, since `evals/results/` is not gitignored and
+  `tool/check_repo.dart` scans untracked files.
 
 ## Consumer-relied invariants
 

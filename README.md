@@ -14,6 +14,10 @@ The same paths in any order give an equal tree with the same node order and
 the same node ids, so ids can key widget state, expansion, and selection
 across rebuilds.
 
+Coding agents can learn the 2.0.0 API and the upgrade from 1.x from the
+[plugin for AI coding assistants](#ai-coding-assistant-support) (Claude
+Code, Codex, and Antigravity).
+
 ## Install
 
 ```sh
@@ -895,6 +899,51 @@ print(tree.childrenOf(missing).isEmpty); // true
 final rows = tree.flatten();
 print(identical(rows.toggleNode(missing), rows)); // true
 ```
+
+## AI coding assistant support
+
+This repository also ships a plugin that teaches coding agents the exact
+directory_tree 2.0.0 API, so they stop writing 1.x calls such as
+`TreeBuilder` or `ExpansionSet`. It is tooling for your agent, not part of
+the Dart package, and it contains instructions only: no hooks, MCP servers,
+or network access.
+
+| Skill | What it covers |
+| --- | --- |
+| `use-directory-tree` | Building, paths and policies, roots, ordering, issues, rows and incremental expansion, search syntax, selection and checkboxes, diffs, rendering, the scanner, and the traps of each |
+| `migrate-directory-tree-v1-to-v2` | The 2.0.0 upgrade: `dart fix --apply` for the three renames, then the manual mapping and the behavior checklist |
+
+Claude Code: in a session, run
+`/plugin marketplace add omar-hanafy/directory_tree`, then
+`/plugin install directory-tree@directory-tree-tools`. From a shell:
+
+```sh
+claude plugin marketplace add omar-hanafy/directory_tree
+claude plugin install directory-tree@directory-tree-tools
+```
+
+Codex:
+
+```sh
+codex plugin marketplace add omar-hanafy/directory_tree
+codex plugin add directory-tree@directory-tree-tools
+```
+
+Antigravity, for the `agy` CLI and the IDE and desktop app, which read the
+same plugin folder:
+
+```sh
+agy plugin install https://github.com/omar-hanafy/directory_tree/tree/main/tooling/ai/directory-tree
+```
+
+Start a new agent session after installing (or run `/reload-plugins` in
+Claude Code). The skills load when a request needs them, for example
+"upgrade this project to directory_tree 2.0.0" or "add a checkbox tree to
+this file picker with directory_tree". The
+[plugin README](https://github.com/omar-hanafy/directory_tree/blob/main/tooling/ai/directory-tree/README.md)
+covers updating, removing, and the checks behind it. Installation is tested
+in Claude Code 2.1.312, Codex 0.165.0, and Antigravity CLI 1.4.9, and CI
+repeats the test weekly with each host's current release.
 
 ## Migrating from 1.x
 
