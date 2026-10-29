@@ -2,6 +2,8 @@ import 'dart:collection';
 
 import 'package:directory_tree/src/tree/directory_tree.dart';
 import 'package:directory_tree/src/tree/node_id.dart';
+// Imported only so documentation references to TreeRows resolve.
+import 'package:directory_tree/src/view/tree_rows.dart';
 import 'package:meta/meta.dart';
 
 /// Which directories of a tree view are expanded: a default plus the ids
@@ -212,7 +214,12 @@ final class ExpansionState {
   /// O(depth of [id] + number of exceptions).
   ///
   /// [DirectoryTree.flatten] does this for every filter match when its
-  /// `expandMatches` argument is true.
+  /// `expandMatches` argument is true, except that it leaves out the
+  /// ancestors whose state its rows never consult: hidden roots (with
+  /// `showRoots: false`) and directories that continue a compacted chain
+  /// (with `compactFolders: true`). This method knows nothing about a view,
+  /// so it expands every ancestor; [TreeRows.reveal] is the view-aware
+  /// variant.
   @useResult
   ExpansionState reveal(DirectoryTree<Object?> tree, NodeId id) =>
       expandAll(tree.ancestorsOf(id).map((node) => node.id));
