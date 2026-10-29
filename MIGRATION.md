@@ -166,7 +166,7 @@ exported) and its 2.0.0 replacement. "Removed" names the alternative.
 
 | 1.x | 2.0.0 | Notes |
 | --- | --- | --- |
-| `diffVisibleNodes(before, after)` | `ListDiff.compute(before, after, keyOf: (row) => row.id)` | Works for any keyed list. Throws an `ArgumentError` when a key repeats within one list. |
+| `diffVisibleNodes(before, after)` | `ListDiff.compute(before, after, keyOf: (row) => row.id)` | Works for any keyed list. Keys must be unique within each list: a repeat in the part that differs throws an `ArgumentError`, and repeats elsewhere are caught only with assertions enabled. |
 | `ListDiff(removeIndicesDesc: ..., insertIndicesAsc: ...)` | Removed | Diffs come only from `ListDiff.compute`. |
 | `ListDiff.removeIndicesDesc` | `ListDiff.removedIndices` | Same order (descending). `dart fix` renames reads. The list is now unmodifiable. |
 | `ListDiff.insertIndicesAsc` | `ListDiff.insertedIndices` | Same order (ascending). `dart fix` renames reads. The list is now unmodifiable. |
@@ -176,8 +176,8 @@ exported) and its 2.0.0 replacement. "Removed" names the alternative.
 
 | 1.x | 2.0.0 | Notes |
 | --- | --- | --- |
-| `basename(path)` | `TreePath.parse(path).name`, `TreeNode.name` | Or `basename` from `package:path`, which 2.0.0 no longer depends on. |
-| `extensionLower(path)` | `TreePath.parse(path).extension.toLowerCase()` | See `TreeEntry.extension` above. |
+| `basename(path)` | `TreePath.parse(path).name`, `TreeNode.name` | Or `basename` from `package:path`, which 2.0.0 no longer depends on. `TreePath.parse` throws a `FormatException` for inputs 1.x accepted, such as `''` and a relative `'..'`; use `TreePath.tryParse` (null instead) for input that may not be a path. `'a/..'` resolves to `.`, so its name is `.`, where 1.x returned `..`. |
+| `extensionLower(path)` | `TreePath.parse(path).extension.toLowerCase()` | See `TreeEntry.extension` above, and the `basename` row for inputs that do not parse. |
 | `hasAnyExtension(name, extensions)` | `TreeQuery.parse('ext:jpg,png')` | For a single name, compare `TreePath.parse(name).extension.toLowerCase()` yourself. |
 | `ancestorChain(data, nodeId)` | `tree.ancestorsOf(id)` | Nearest ancestor first and without the node itself; 1.x started at the synthetic root and ended with the node. To show a node, use `ExpansionState.reveal(tree, id)` or `TreeRows.reveal(id)`. |
 | `findByVirtualPath(data, virtualPath)` | `tree.nodeAt(path)`, `tree.idOf(path)` | Takes the real path, parsed with the tree's `PathPolicy`. O(1) instead of a scan. |
@@ -619,9 +619,11 @@ These differences can change what your code does without a compile error.
   its `metadata['virtualParent']`. In 2.0.0 every entry has a path. Give a
   placeholder file the path it should appear at, and mark it in `data` if
   your UI treats it differently.
-- **Names come from paths.** 1.x displayed `TreeEntry.name`, which could
-  differ from the last segment of `fullPath`. 2.0.0 always uses the last
-  path segment.
+- **Names come from paths.** 1.x already named a file's node after the
+  last segment of `fullPath`, but virtual entries were shown as
+  `TreeEntry.name`, and `TreeEntry.extension` was read from `name`, which
+  could differ from the path. 2.0.0 has no separate name: `TreeNode.name`
+  and `node.path.extension` both come from the last path segment.
 - **Duplicate entries: the later one wins.** 1.x kept the first entry for a
   path and silently dropped later entries with the same path or the same
   `TreeEntry.id`. 2.0.0 has no entry ids. Entries with the same path merge,
@@ -685,7 +687,9 @@ These differences can change what your code does without a compile error.
   unchecked empty subfolder makes its parent `CheckState.partial`.
 - **Row diffs reject duplicate keys and report changes.**
   `ListDiff.compute` throws an `ArgumentError` when a key repeats within
-  one list, where 1.x returned a diff silently. It also lists kept rows
+  one list, where 1.x returned a diff silently. Release builds check only
+  the part of the lists that differs; repeats in the shared start and end
+  are caught when assertions are enabled. It also lists kept rows
   whose content changed in `changedIndices`, so `isEmpty` is stricter than
   1.x `isNoop`.
 - **Minimum SDK and dependencies.** 1.0.0 required Dart `^3.10.4`. 2.0.0

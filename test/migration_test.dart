@@ -221,6 +221,14 @@ void main() {
       expect(tree.nodeAt('/r/a.txt')!.name, 'a.txt');
     });
 
+    test('TreePath.parse rejects inputs that 1.x basename accepted', () {
+      expect(() => TreePath.parse(''), throwsFormatException);
+      expect(() => TreePath.parse('..'), throwsFormatException);
+      expect(TreePath.tryParse(''), isNull);
+      expect(TreePath.tryParse('..'), isNull);
+      expect(TreePath.parse('a/..').name, '.');
+    });
+
     test('siblings sort directories first, in natural order', () {
       final tree = DirectoryTree.fromPaths([
         '/s/file10.txt',

@@ -695,6 +695,16 @@ void main() {
     final next = tree.rebuild((builder) => builder.addFile('/repo/new.txt'));
     expect(next[lib]!.path, tree[lib]!.path);
 
+    // With minimal roots, removing an entry can move the top level.
+    final withoutReadme = DirectoryTree.fromPaths([
+      '/repo/README.md',
+      '/repo/lib/a.dart',
+    ]).rebuild((builder) => builder.remove('/repo/README.md'));
+    expect(withoutReadme.rootNodes.map((node) => node.path.toString()), [
+      '/repo/lib',
+    ]);
+    expect(withoutReadme.nodeAt('/repo'), isNull);
+
     // TreePath.extension is only the last extension.
     expect(TreePath.parse('/dist/app.tar.gz').extension, '.gz');
 

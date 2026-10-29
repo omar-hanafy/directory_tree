@@ -321,7 +321,12 @@ repo/
 
 `remove` takes a subtree with it unless you pass `recursive: false`.
 Unchanged paths keep their ids, so expansion and selection state carries
-over. `rebuild` runs a full build; see the performance numbers below.
+over. The top level can still move: with the default
+`TreeRoots.minimal()`, removing `/repo/README.md` from a tree whose other
+files are all under `/repo/lib` makes `lib` the top-level node and removes
+`/repo`. Pin the top level with `TreeRoots.fixed` or a directory entry when
+that matters. `rebuild` runs a full build; see the performance numbers
+below.
 
 ## Views
 
@@ -679,8 +684,11 @@ final moves = ListDiff.compute(
 print(moves); // ListDiff(removed: [2, 0], inserted: [1, 2], changed: [])
 ```
 
-Keys must be unique within each list; a duplicate throws an
-`ArgumentError`.
+Keys must be unique within each list. A key that repeats in the part of
+the lists that differs always throws an `ArgumentError`; repeats in the
+shared start and end are caught only when assertions are enabled (debug
+builds and tests), so release builds skip hashing the rows that did not
+move.
 
 ### `TreeDiff` for rebuilt trees
 
