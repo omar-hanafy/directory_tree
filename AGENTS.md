@@ -221,7 +221,10 @@ performance table from it after a full run.
 3. On merge, `auto-release.yml` sees that the version value changed,
    creates the tag `directory_tree-v<version>` with `TAG_PUSH_PAT` (a tag
    pushed with `GITHUB_TOKEN` would not start the publish workflow), and
-   creates the GitHub release (a prerelease from `dev`).
+   creates the GitHub release (a prerelease from `dev`). Runs have no
+   concurrency group, so a queued run is never cancelled, and re-running a
+   failed run is safe: a tag already on that commit is kept and only a
+   missing release is created.
 4. The tag starts `publish.yml`, which publishes to pub.dev through
    trusted publishing (OIDC); no credentials are stored.
 

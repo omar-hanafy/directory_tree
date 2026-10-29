@@ -6,9 +6,10 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: auto-release-${{ github.repository }}-directory_tree-${{ github.ref }}
-  cancel-in-progress: false
+# No concurrency group: GitHub cancels a pending run when a newer one queues
+# in the same group, and a cancelled run would leave its version bump
+# untagged for good, because the next push sees no version change. Runs
+# cannot race: each compares only its own push's before and after versions.
 
 jobs:
   release:
@@ -81,7 +82,11 @@ jobs:
             echo "tag=directory_tree-v$new_version"
           } >> "$GITHUB_OUTPUT"
 
+      # A tag that already points at this commit means a re-run after the
+      # tag was pushed and a later step failed: keep it and only make sure
+      # the release exists. A tag on any other commit is never moved.
       - name: Verify tag is new
+        id: tag
         if: steps.version.outputs.changed == 'true'
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
@@ -90,14 +95,21 @@ jobs:
           set -euo pipefail
           tag="$RELEASE_TAG"
           git fetch --force --tags origin
-          if git show-ref --verify --quiet "refs/tags/$tag" || \
-              git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-            echo "Tag $tag already exists. Never move or reuse a release tag."
-            exit 1
+          if ! git show-ref --verify --quiet "refs/tags/$tag"; then
+            echo 'create=true' >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          target=$(git rev-parse "refs/tags/$tag^{commit}")
+          if [[ "$target" == "$GITHUB_SHA" ]]; then
+            echo "Tag $tag already points at $GITHUB_SHA; it is kept."
+            echo 'create=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Tag $tag already exists at $target. Never move or reuse a release tag."
+          exit 1
 
       - name: Create and push tag
-        if: steps.version.outputs.changed == 'true'
+        if: steps.version.outputs.changed == 'true' && steps.tag.outputs.create == 'true'
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         shell: bash
@@ -118,6 +130,10 @@ jobs:
         run: |
           set -euo pipefail
           tag="$RELEASE_TAG"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists."
+            exit 0
+          fi
           args=("$tag" --verify-tag --generate-notes --target "$GITHUB_SHA")
           if [[ "${GITHUB_REF_NAME}" == 'dev' ]]; then
             args+=(--prerelease)
