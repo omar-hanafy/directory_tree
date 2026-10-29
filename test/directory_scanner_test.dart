@@ -609,6 +609,112 @@ void main() {
       expect(children, ['a', 'empty', 'top.txt']);
       expect(tree.options.order, TreeOrder.alphabetical);
     });
+
+    group('parses backslashes by the host rule', () {
+      late Directory dir;
+
+      setUp(() => dir = base.createTempSync('backslash'));
+
+      /// Scans [dir] with [scanner] and checks the scanTree contract: one
+      /// explicit top-level node, data on every node, no issues, and
+      /// exactly [names] (literal file names) below the root.
+      Future<DirectoryTree<FileSystemEntity>> expectIntact(
+        List<String> names, {
+        DirectoryScanner scanner = const DirectoryScanner(),
+        TreeOptions options = const TreeOptions(),
+      }) async {
+        final tree = await scanner.scanTree(dir.path, options: options);
+        expect(tree.issues, isEmpty);
+        final root = tree.rootNodes.single;
+        expect(root.path, TreePath.parse(dir.path));
+        expect(root.data!.path, dir.path);
+        expect(tree.nodes.every((node) => node.isExplicit), isTrue);
+        expect(tree.nodes.every((node) => node.data != null), isTrue);
+        final children = tree.childrenOf(tree.roots.single).toList();
+        expect(children.map((node) => node.name), unorderedEquals(names));
+        for (final node in children) {
+          expect(node.data, isA<File>());
+          expect(node.data!.path, '${dir.path}/${node.name}');
+          expect(tree.parentOf(node.id)?.id, tree.roots.single);
+        }
+        expect(tree.length, names.length + 1);
+        expect(tree.options.paths.backslashIsSeparator, isFalse);
+        return tree;
+      }
+
+      test('a backslash in a name is not a separator', () async {
+        create(dir, ['w', r'w\z.txt', 'ok.txt']);
+        await expectIntact(['w', r'w\z.txt', 'ok.txt']);
+      });
+
+      test('a trailing backslash keeps two names apart', () async {
+        create(dir, ['a', r'a\']);
+        await expectIntact(['a', r'a\']);
+      });
+
+      test('backslash dot-dot segments never climb out', () async {
+        create(dir, [r'x\..\..\outside.txt', r'..\..\hidden.txt']);
+        await expectIntact([
+          r'x\..\..\outside.txt',
+          r'..\..\hidden.txt',
+        ], scanner: const DirectoryScanner(includeHidden: true));
+      });
+
+      test('user options keep their settings but get the host rule', () async {
+        create(dir, ['b', r'a\b.txt']);
+        String fold(String path) => path;
+        final options = TreeOptions(
+          paths: PathPolicy(caseSensitive: false, unicodeNormalizer: fold),
+          order: TreeOrder.alphabetical,
+        );
+        final tree = await expectIntact([r'a\b.txt', 'b'], options: options);
+        expect(tree.childrenOf(tree.roots.single).map((node) => node.name), [
+          r'a\b.txt',
+          'b',
+        ]);
+        expect(tree.options.order, TreeOrder.alphabetical);
+        expect(tree.options.roots, options.roots);
+        expect(tree.options.paths.caseSensitive, isFalse);
+        expect(tree.options.paths.unicodeNormalizer, fold);
+        expect(
+          tree.options,
+          options.copyWith(
+            paths: PathPolicy(
+              caseSensitive: false,
+              backslashIsSeparator: false,
+              unicodeNormalizer: fold,
+            ),
+          ),
+        );
+      });
+
+      test('the documented policy builds scan entries intact', () async {
+        create(dir, ['w', r'w\z.txt']);
+        final entries = await const DirectoryScanner().scan(dir.path);
+        final hostTree = DirectoryTree.build(
+          entries,
+          options: TreeOptions(
+            paths: PathPolicy(backslashIsSeparator: Platform.isWindows),
+          ),
+        );
+        expect(hostTree.issues, isEmpty);
+        expect(hostTree.length, 3);
+        // The default policy splits the POSIX name, which is why scanTree
+        // and the docs override it.
+        final defaultTree = DirectoryTree.build(entries);
+        expect(defaultTree.issues, isNotEmpty);
+      });
+
+      test('a scan path with a backslash in a name is scanned', () async {
+        final odd = Directory('${dir.path}/odd\\name')..createSync();
+        File('${odd.path}/inner.txt').createSync();
+        final tree = await const DirectoryScanner().scanTree(odd.path);
+        expect(tree.issues, isEmpty);
+        expect(tree.rootNodes.single.data!.path, odd.path);
+        expect(tree.rootNodes.single.name, r'odd\name');
+        expect(tree.length, 2);
+      });
+    }, skip: Platform.isWindows ? r'\ is a separator on Windows' : false);
   });
 
   group('value semantics', () {

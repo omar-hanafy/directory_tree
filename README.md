@@ -110,7 +110,8 @@ A `PathPolicy` decides three things for a whole tree, through
   different nodes. Use `PathPolicy.caseInsensitive` for trees that mirror
   Windows or default macOS volumes.
 - `backslashIsSeparator` (default `true`): set it to `false` only when your
-  POSIX file names contain literal backslashes.
+  POSIX file names contain literal backslashes. `DirectoryScanner.scanTree`
+  does this for you off Windows.
 - `unicodeNormalizer` (default none): a function applied to every raw path,
   typically NFC normalization, so names created on macOS (often NFD) match
   names from other sources.
@@ -789,6 +790,13 @@ without listing it, and links are not followed unless `followLinks` is
 true. A directory that cannot be read goes to `onError` and the scan
 continues. `scan` and `scanSync` return the entries without building a
 tree.
+
+`dart:io` reports paths in host syntax, where `\` is an ordinary
+file-name character on Linux and macOS. `scanTree` therefore always parses
+with `backslashIsSeparator` set to `Platform.isWindows`, keeping the rest
+of the `PathPolicy` you pass, and the tree's `options` show the policy it
+used. To build a tree from `scan` or `scanSync` entries yourself, pass
+`PathPolicy(backslashIsSeparator: Platform.isWindows)` the same way.
 
 The scanner needs `dart:io`, so it works on the Dart VM, in native
 executables, and in Flutter apps on mobile and desktop, but not on the web.

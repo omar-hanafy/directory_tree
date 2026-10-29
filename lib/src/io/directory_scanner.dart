@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:io';
 
 import 'package:directory_tree/src/io/extended_length_path.dart';
+import 'package:directory_tree/src/path/path_policy.dart';
 import 'package:directory_tree/src/tree/directory_tree.dart';
 import 'package:directory_tree/src/tree/tree_entry.dart';
 import 'package:directory_tree/src/tree/tree_options.dart';
@@ -38,6 +39,22 @@ import 'package:meta/meta.dart';
 /// path that climbs above its start (see there). Entries are sorted by
 /// [String.compareTo] on [TreeEntry.path] (UTF-16 code units), so the result
 /// is the same on every run over an unchanged directory.
+///
+/// These paths use host syntax: `\` is a separator on Windows but an
+/// ordinary file-name character on Linux and macOS. [scanTree] parses them
+/// accordingly. When you build a tree from the entries of [scan] or
+/// [scanSync] yourself, do the same, because the default [PathPolicy]
+/// treats `\` as a separator everywhere and would split a POSIX name such
+/// as `w\z.txt` into a directory and a file:
+///
+/// ```dart
+/// final tree = DirectoryTree.build(
+///   await const DirectoryScanner().scan(path),
+///   options: TreeOptions(
+///     paths: PathPolicy(backslashIsSeparator: Platform.isWindows),
+///   ),
+/// );
+/// ```
 ///
 /// Filters are applied in this order to each entity below the root:
 /// [includeHidden], then [skip]; [maxDepth] limits which directories are
@@ -182,6 +199,10 @@ final class DirectoryScanner {
   /// link to one), and with an [ArgumentError] when [maxDepth] is negative.
   /// Failures below the root go to [onError] instead.
   ///
+  /// The paths use host syntax; to build a tree from them, parse them with
+  /// `PathPolicy(backslashIsSeparator: Platform.isWindows, ...)` (see
+  /// [DirectoryScanner]), or call [scanTree], which does.
+  ///
   /// Takes O(n log n) time for n reported entities, plus one directory
   /// listing per listed directory.
   Future<List<TreeEntry<FileSystemEntity>>> scan(String path) async {
@@ -222,6 +243,10 @@ final class DirectoryScanner {
   /// [maxDepth] is negative. Failures below the root go to [onError]
   /// instead.
   ///
+  /// The paths use host syntax; to build a tree from them, parse them with
+  /// `PathPolicy(backslashIsSeparator: Platform.isWindows, ...)` (see
+  /// [DirectoryScanner]), or call [scanTree], which does.
+  ///
   /// Takes O(n log n) time for n reported entities, plus one directory
   /// listing per listed directory.
   List<TreeEntry<FileSystemEntity>> scanSync(String path) {
@@ -261,8 +286,8 @@ final class DirectoryScanner {
   /// a directory entry. Every node's `data` is the [FileSystemEntity] of its
   /// entry; no node is inferred.
   ///
-  /// Node paths are parsed by [TreeOptions.paths] from the paths `dart:io`
-  /// reports. A relative [path] that the policy can represent, such as
+  /// Node paths are parsed by [TreeOptions.paths], with the backslash rule
+  /// below, from the paths `dart:io` reports. A relative [path] that the policy can represent, such as
   /// `lib` or `./src`, is scanned as given, so the tree stays relative.
   /// A relative [path] that climbs above its start, such as `..` or
   /// `../project`, has no relative tree path, so this method scans
@@ -273,17 +298,44 @@ final class DirectoryScanner {
   /// never make this substitution; they return paths exactly as `dart:io`
   /// reports them for the path given.
   ///
+  /// Backslashes follow the host: `dart:io` reports paths in host syntax,
+  /// where `\` separates segments on Windows but is an ordinary file-name
+  /// character on Linux and macOS (`w\z.txt` is one file there). So this
+  /// method always parses with [PathPolicy.backslashIsSeparator] set to
+  /// [Platform.isWindows], whatever [options] says, and keeps every other
+  /// setting of [options] (including [PathPolicy.caseSensitive] and
+  /// [PathPolicy.unicodeNormalizer]) as given. The returned tree's
+  /// [DirectoryTree.options] show the policy actually used; it equals
+  /// [options] only when [options] already followed the host rule.
+  ///
   /// Completes with the same errors as [scan].
   Future<DirectoryTree<FileSystemEntity>> scanTree(
     String path, {
     TreeOptions options = const TreeOptions(),
-  }) async => DirectoryTree<FileSystemEntity>.build(
-    await scan(_treePath(path, options)),
-    options: options,
-  );
+  }) async {
+    final effective = _hostOptions(options);
+    return DirectoryTree<FileSystemEntity>.build(
+      await scan(_treePath(path, effective)),
+      options: effective,
+    );
+  }
 
-  /// The path [scanTree] scans for [path]: [path] itself when
-  /// [TreeOptions.paths] can parse it, and its absolute form when only that
+  /// [options] with [PathPolicy.backslashIsSeparator] set to the host rule,
+  /// or [options] itself when it already matches.
+  static TreeOptions _hostOptions(TreeOptions options) {
+    final paths = options.paths;
+    if (paths.backslashIsSeparator == Platform.isWindows) return options;
+    return options.copyWith(
+      paths: PathPolicy(
+        caseSensitive: paths.caseSensitive,
+        backslashIsSeparator: Platform.isWindows,
+        unicodeNormalizer: paths.unicodeNormalizer,
+      ),
+    );
+  }
+
+  /// The path [scanTree] scans for [path]: [path] itself when the effective
+  /// policy of [options] can parse it, and its absolute form when only that
   /// parses (a relative path escaping its start).
   ///
   /// An empty path stays empty so [scan] still reports it as missing rather
