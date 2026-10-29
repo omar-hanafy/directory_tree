@@ -623,6 +623,23 @@ void main() {
     ]);
     expect(shuffled, tree);
     expect(shuffled.nodes.map((node) => node.id), tree.nodes.map((n) => n.id));
+    // Two paths that name one node: the later one wins and keeps its
+    // spelling, while the node order and ids stay the same.
+    const insensitive = TreeOptions(paths: PathPolicy.caseInsensitive);
+    final upperLast = DirectoryTree.fromPaths([
+      '/r/readme.md',
+      '/r/README.md',
+    ], options: insensitive);
+    final lowerLast = DirectoryTree.fromPaths([
+      '/r/README.md',
+      '/r/readme.md',
+    ], options: insensitive);
+    expect(upperLast.nodeAt('/r/readme.md')!.name, 'README.md');
+    expect(lowerLast.nodeAt('/r/readme.md')!.name, 'readme.md');
+    expect(
+      upperLast.nodes.map((node) => node.id),
+      lowerLast.nodes.map((node) => node.id),
+    );
 
     // A subtree is the slice of nodes at indexOf, subtreeSizeOf long.
     final start = tree.indexOf(lib);

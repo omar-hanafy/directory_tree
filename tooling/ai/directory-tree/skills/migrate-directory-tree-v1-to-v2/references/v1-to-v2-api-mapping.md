@@ -19,7 +19,7 @@ alternative. Only the three rows marked `dart fix` are automated.
 | `build(expandFoldersByDefault: ...)` | `ExpansionState.expanded()` or `ExpansionState.collapsed()` | Pass the state to `flatten` or `render`. |
 | `build(selectNewFilesByDefault: ...)` | Removed | Build the state yourself: `SelectionState(mode: SelectionMode.multiple, selected: tree.files.map((node) => node.id))`. |
 | `build(preferDeepestRoot: ...)` | Removed | The flag had no effect in 1.0.0. |
-| `build(sortChildrenByName: ...)` | `TreeOptions(order: ...)` | Siblings are always sorted. There is no input-order mode, because the result never depends on input order. |
+| `build(sortChildrenByName: ...)` | `TreeOptions(order: ...)` | Siblings are always sorted. There is no input-order mode, because sibling order never depends on input order. |
 | `build(stripPrefixes: ...)` | Removed | Display relative paths with `node.path.relativeTo(TreePath.parse(prefix))`, or build the tree from relative paths. |
 | `build(autoPickVisibleRoot: ...)`, `build(visibleRootMaxHoistLevels: ...)`, `build(visibleRootIgnoreVirtualFiles: ...)` | Removed | The top-level nodes come from `TreeOptions.roots`. To show a chain of single folders on one row, use `flatten(compactFolders: true)`. |
 | `build(mergeVirtualIntoRealFolders: ...)` | Removed | There are no virtual entries. |

@@ -87,8 +87,10 @@ rule to get a green run.
   `abstract class` users extend, `TreeRows` is an unmodifiable `ListBase`,
   and `DirectoryTreeBuilder` is mutable and compares by identity.
 - Determinism: the same entry set in any order builds `==` trees with the
-  same node order and ids (`test/determinism_test.dart`). Never let output
-  depend on hash iteration order or input order.
+  same node order and ids (`test/determinism_test.dart`). The documented
+  exception: of several entries that name one node, the later one wins.
+  Never let output depend on hash iteration order, or on input order
+  beyond that rule.
 - Bad input never throws while building; it becomes a `TreeIssue`.
 - Tests live flat in `test/`, one file per domain. Use `@TestOn('vm')` only
   for files that import `dart:io` or read repository files; every other

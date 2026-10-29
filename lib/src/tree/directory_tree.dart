@@ -25,10 +25,12 @@ part 'tree_node.dart';
 /// lookups, and [descendantsOf] is a view, not a copy.
 ///
 /// Build a tree with [DirectoryTree.build], [DirectoryTree.fromPaths], or a
-/// [DirectoryTreeBuilder]. Building is deterministic: the same entries
-/// (unique paths) in any order produce an equal tree with an identical
-/// [nodes] order, and node ids are stable across rebuilds. Bad input never
-/// throws; it is skipped and reported in [issues].
+/// [DirectoryTreeBuilder]. Building is deterministic: the same entries in
+/// any order produce an equal tree with an identical [nodes] order, and
+/// node ids are stable across rebuilds. Order matters only when several
+/// entries name one node: the later one wins, so it decides that node's
+/// entry and spelling. Bad input never throws; it is skipped and reported
+/// in [issues].
 ///
 /// ```dart
 /// final tree = DirectoryTree.fromPaths([

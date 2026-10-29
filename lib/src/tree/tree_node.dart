@@ -35,7 +35,8 @@ sealed class TreeNode<T> {
   /// the tree keeps count: a file entry dropped as a conflict (see
   /// [TreeIssueKind.conflict]) spells nothing, so rebuilding from
   /// `DirectoryTree.entries` gives the same paths. So a subtree always
-  /// displays consistently, and the spelling never depends on input order.
+  /// displays consistently, and the spelling depends on input order only
+  /// when several entries name one node, where the later one wins.
   final TreePath path;
 
   /// The last segment of [path], or a root name such as `/` or `C:`.

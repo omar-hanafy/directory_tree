@@ -11,8 +11,9 @@ expansion and selection helpers were mutable sets.
   ranges.
 - A node's id is its canonical path (`NodeId`), so ids are readable and stay
   stable across rebuilds.
-- Input order never changes the result, and bad input is reported in
-  `DirectoryTree.issues` instead of being dropped silently.
+- Input order never changes the node order or the ids. It matters only
+  when two entries name the same node, where the later one wins. Bad input
+  is reported in `DirectoryTree.issues` instead of being dropped silently.
 - Expansion, selection, filters, and diffs are immutable values.
 - The core library depends only on `package:meta` and runs on every
   platform, including the web and dart2wasm.
@@ -75,7 +76,7 @@ exported) and its 2.0.0 replacement. "Removed" names the alternative.
 | `build(expandFoldersByDefault: ...)` | `ExpansionState.expanded()` or `ExpansionState.collapsed()` | Pass the state to `flatten` or `render`. |
 | `build(selectNewFilesByDefault: ...)` | Removed | Build the state yourself: `SelectionState(mode: SelectionMode.multiple, selected: tree.files.map((node) => node.id))`. |
 | `build(preferDeepestRoot: ...)` | Removed | The flag had no effect in 1.0.0. |
-| `build(sortChildrenByName: ...)` | `TreeOptions(order: ...)` | Siblings are always sorted. There is no input-order mode, because the result never depends on input order. |
+| `build(sortChildrenByName: ...)` | `TreeOptions(order: ...)` | Siblings are always sorted. There is no input-order mode, because sibling order never depends on input order. |
 | `build(stripPrefixes: ...)` | Removed | Display relative paths with `node.path.relativeTo(TreePath.parse(prefix))`, or build the tree from relative paths. |
 | `build(autoPickVisibleRoot: ...)`, `build(visibleRootMaxHoistLevels: ...)`, `build(visibleRootIgnoreVirtualFiles: ...)` | Removed | The top-level nodes come from `TreeOptions.roots`. To show a chain of single folders on one row, use `flatten(compactFolders: true)`. |
 | `build(mergeVirtualIntoRealFolders: ...)` | Removed | There are no virtual entries. |
@@ -650,7 +651,7 @@ These differences can change what your code does without a compile error.
   compared lowercased strings and put `file10` first. Names that differ
   only in case are ordered by exact code units. 1.x kept input order when
   `sortChildrenByName` was false; 2.0.0 always sorts, so input order never
-  matters.
+  changes sibling order.
 - **Top-level label collisions read like paths.** When two top-level
   directories share a name, 1.x labelled them `a - src` and `b - src`;
   2.0.0 labels them `a/src` and `b/src` in `TreeNode.label`.

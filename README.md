@@ -12,7 +12,9 @@ side panels, file pickers, repository viewers, and CLI tree printers.
 
 The same paths in any order give an equal tree with the same node order and
 the same node ids, so ids can key widget state, expansion, and selection
-across rebuilds.
+across rebuilds. Order matters only when two paths name the same node (such
+as `README.md` and `readme.md` in a case-insensitive tree): the later one
+wins and keeps its spelling.
 
 Coding agents can learn the 2.0.0 API and the upgrade from 1.x from the
 [plugin for AI coding assistants](#ai-coding-assistant-support) (Claude
