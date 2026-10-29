@@ -269,9 +269,14 @@ final class TreePath implements Comparable<TreePath> {
   /// The canonical string: [root] followed by [segments] joined with `/`.
   ///
   /// The relative root prints as `.`. A relative path whose first segment
-  /// looks like a drive (`C:`) is prefixed with `./` so it cannot be read
-  /// back as a drive path. Parsing the result with the same policy returns an
-  /// equal path.
+  /// looks like a drive is prefixed with `./`, so it cannot be read back as
+  /// a drive path and never shares a case-insensitive [PathPolicy.idOf]
+  /// with one. A segment looks like a drive when it is one character whose
+  /// Unicode simple case folding is an ASCII letter, followed by `:`: an
+  /// ASCII letter (`C:`), the KELVIN SIGN (`\u212A:`, which folds to `k:`),
+  /// or LATIN SMALL LETTER LONG S (`\u017F:`, which folds to `s:`). The
+  /// prefix does not depend on the policy. Parsing the result with the
+  /// same policy returns an equal path.
   @override
   String toString() => _string;
 
@@ -384,14 +389,26 @@ const int _slash = 0x2F;
 const int _backslash = 0x5C;
 const int _colon = 0x3A;
 
-/// Whether [segment] is exactly a drive spec such as `C:` or `d:`.
+/// Whether [segment] is one code point whose case folding is an ASCII
+/// letter, followed by `:`: a drive spec such as `C:` or `d:`, or a
+/// spelling that a case-insensitive id folds into one, such as `\u212A:`
+/// (KELVIN SIGN, folds to `k:`) or `\u017F:` (LATIN SMALL LETTER LONG S,
+/// folds to `s:`).
 ///
 /// A relative path that starts with such a segment would read back as a
-/// drive path, so [TreePath.toString] prefixes it with `./`.
-bool _isDriveLike(String segment) =>
-    segment.length == 2 &&
-    segment.codeUnitAt(1) == _colon &&
-    isAsciiLetter(segment.codeUnitAt(0));
+/// drive path, or would have the case-insensitive id of one, so
+/// [TreePath.toString] prefixes it with `./`. The decision ignores the
+/// policy, so a path prints the same in every tree, and parsing the
+/// prefixed string gives the same segments back.
+///
+/// Folding keeps the UTF-16 length of every code point that folds to
+/// ASCII (see [foldCase]), so a segment of two code units is the only
+/// candidate, and the cheap length and colon checks run first.
+bool _isDriveLike(String segment) {
+  if (segment.length != 2 || segment.codeUnitAt(1) != _colon) return false;
+  final first = segment.codeUnitAt(0);
+  return isAsciiLetter(first) || isAsciiLetter(foldCodePoint(first));
+}
 
 /// Whether [root] is a UNC root without a share, such as `//server/`.
 bool _isServerOnlyRoot(String root) =>
@@ -420,6 +437,9 @@ extension PathPolicyFolding on PathPolicy {
   /// simple case folding (see [foldCase]).
   ///
   /// Folding works per code point, so the key of each part of a path joined
-  /// with `/` equals the key of the whole path.
+  /// with `/` equals the key of the whole path. The `./` prefix of a
+  /// relative path is the same for every spelling of its first segment
+  /// that folds alike (see [TreePath.toString]), so it never breaks that
+  /// equality.
   String foldKey(String text) => caseSensitive ? text : foldCase(text);
 }

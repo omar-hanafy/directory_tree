@@ -186,7 +186,12 @@ final class DirectoryTreeBuilder<T> {
 ///
 /// The trie folds each segment on its own while ids fold the whole canonical
 /// string. The two agree because the package's simple case folding maps
-/// each code point on its own, without context, and maps `/` to itself.
+/// each code point on its own, without context, and maps `/` to itself,
+/// and because the only other part of a canonical string, the `./` prefix
+/// of a relative path whose first segment looks like a drive, is decided
+/// on the folded segment: `K:`, `k:`, and `\u212A:` (KELVIN SIGN) all get
+/// it. So two paths reach one slot exactly when their ids are equal, and a
+/// relative `\u212A:/x` never takes the id of the drive path `K:/x`.
 /// Materialization asserts that ids stay unique.
 String _foldWith(PathPolicy policy, String text) => policy.foldKey(text);
 

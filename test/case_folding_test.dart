@@ -1,5 +1,6 @@
 import 'package:directory_tree/directory_tree.dart';
 import 'package:directory_tree/src/path/case_folding.dart';
+import 'package:directory_tree/src/path/tree_path.dart' show isAsciiLetter;
 import 'package:test/test.dart';
 
 // Every expectation here is a literal, so the file pins one result for the
@@ -53,6 +54,29 @@ void main() {
       expect(lengthChanges, [0x1DF95]);
       expect(foldCodePoint(0x1DF95), 0xDF);
     });
+
+    test(
+      'folds only U+017F and U+212A from outside ASCII to ASCII letters',
+      () {
+        // TreePath prefixes a relative path with './' when its first segment
+        // folds to a drive spec, deciding from the first code unit only. That
+        // is exact only while every code point that folds to an ASCII letter
+        // is a single UTF-16 code unit; a new one must be reviewed there.
+        final toAsciiLetter = <int>[
+          for (var codePoint = 0x80; codePoint <= 0x10FFFF; codePoint++)
+            if (isAsciiLetter(foldCodePoint(codePoint))) codePoint,
+        ];
+        expect(toAsciiLetter, [0x017F, 0x212A]);
+        final drives = [
+          for (final codePoint in toAsciiLetter)
+            TreePath.parse('${String.fromCharCode(codePoint)}:/x'),
+        ];
+        expect(drives.map((path) => path.toString()), [
+          './\u017F:/x',
+          './\u212A:/x',
+        ]);
+      },
+    );
 
     final spots = <int, int>{
       0x41: 0x61, // A

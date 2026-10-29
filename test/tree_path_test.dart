@@ -8,10 +8,12 @@ String canonicalOracle(TreePath path) {
   final segments = path.segments;
   if (segments.isEmpty) return path.root.isEmpty ? '.' : path.root;
   final first = segments.first;
+  // An ASCII letter, or one of the two code points that fold to one (see
+  // test/case_folding_test.dart), followed by a colon.
   final driveLike =
       first.length == 2 &&
       first[1] == ':' &&
-      RegExp('[A-Za-z]').hasMatch(first[0]);
+      RegExp('[A-Za-z\u017F\u212A]').hasMatch(first[0]);
   final prefix = path.root.isEmpty && driveLike ? './' : path.root;
   return '$prefix${segments.join('/')}';
 }
@@ -45,6 +47,11 @@ void main() {
       'c:foo/bar': ('', ['c:foo', 'bar'], 'c:foo/bar'),
       'a/../C:/x': ('', ['C:', 'x'], './C:/x'),
       './c:': ('', ['c:'], './c:'),
+      // Code points that fold to an ASCII letter look like drives too, so a
+      // case-insensitive id never equals the id of a drive path.
+      '\u212A:/x': ('', ['\u212A:', 'x'], './\u212A:/x'),
+      '\u017F:': ('', ['\u017F:'], './\u017F:'),
+      '\u017F:x': ('', ['\u017F:x'], '\u017F:x'),
       // Drives: the letter is always uppercased.
       'C:': ('C:/', [], 'C:/'),
       'c:': ('C:/', [], 'C:/'),
